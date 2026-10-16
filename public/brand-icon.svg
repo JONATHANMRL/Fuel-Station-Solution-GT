@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Gasolina GT icon">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1">
+      <stop offset="0%" stop-color="#0d4d3b"/>
+      <stop offset="100%" stop-color="#1fbf75"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="44" fill="#edf9f0"/>
+  <path d="M68 168V95.5c0-9.4 7.6-17 17-17H126c10.7 0 17.9 9.9 14.3 19.5l-4.8 13.1h11.3c18.7 0 33.9 15.2 33.9 33.9v15.5c0 10.4-8.5 18.9-18.9 18.9H90.3C77.4 179 68 169.6 68 168z" fill="url(#g)"/>
+  <path d="M95 70h24v45H95zm40 33h22l18 22v10H100l-4-9h54l18-23h-17z" fill="#f7d35b"/>
+  <rect x="106" y="107" width="52" height="28" rx="8" fill="#113a2d" opacity="0.92"/>
+  <circle cx="114" cy="166" r="14" fill="#0d4d3b"/>
+  <circle cx="160" cy="166" r="14" fill="#0d4d3b"/>
+  <rect x="70" y="134" width="30" height="18" rx="7" fill="#fff" opacity="0.9"/>
+  <path d="M177 80h22v18h-22zm-16-17h43v18h-43z" fill="#0d4d3b"/>
+</svg>

@@ -1,0 +1,17 @@
+{
+  "name": "Gasolina GT",
+  "short_name": "Gasolina GT",
+  "description": "Sistema de consulta y notificación de precios de combustibles en Huehuetenango.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f9f5",
+  "theme_color": "#0d4d3b",
+  "icons": [
+    {
+      "src": "/brand-icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
