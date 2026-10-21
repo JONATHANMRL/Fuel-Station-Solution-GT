@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
 import { fuelLabels } from './data'
 import AdminAccessGate from './components/AdminAccessGate'
+import MapBrandLegend from './components/MapBrandLegend'
+import { getMapMarkerStyle } from './config/mapBrandStyles'
 import { comparePrices, getCheapestStation, getPriceDifference, hasCoordinates, hasPrice } from './utils/stationUtils'
 import {
   getFavorites,
@@ -70,12 +72,6 @@ const formatDate = (value) =>
     dateStyle: 'medium',
     timeStyle: 'short',
   }) : 'Sin actualización de precios'
-
-const statusColors = {
-  updated: '#10b981',
-  warning: '#f59e0b',
-  critical: '#ef4444',
-}
 
 const brandColors = {
   Shell: '#f7d35b',
@@ -494,11 +490,6 @@ function App() {
               <h2>Gasolineras en Huehuetenango</h2>
               <p className="section-description">Consulta ubicaciones y precios de combustibles por galón.</p>
             </div>
-            <div className="legend-inline">
-              <span><i className="dot ok" /> Actualizado</span>
-              <span><i className="dot warn" /> Revisar</span>
-              <span><i className="dot bad" /> Antiguo</span>
-            </div>
           </div>
 
           <div className="toolbar-row">
@@ -545,6 +536,7 @@ function App() {
             <div className="map-panel">
               <MapContainer center={[15.3149, -91.4753]} zoom={13} scrollWheelZoom className="map-view">
                 <MapScreenLayout active={activeSection === 'mapa'} selectedStationId={selectedStationId} />
+                <MapBrandLegend stations={stationList} />
                 <TileLayer
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -553,13 +545,7 @@ function App() {
                   <CircleMarker
                     key={station.id}
                     center={[station.lat, station.lng]}
-                    radius={station.id === selectedStationId ? 12 : 9}
-                    pathOptions={{
-                      color: station.id === selectedStationId ? '#123047' : '#ffffff',
-                      weight: station.id === selectedStationId ? 4 : 2,
-                      fillColor: statusColors[station.status] ?? '#94a3b8',
-                      fillOpacity: 0.9,
-                    }}
+                    {...getMapMarkerStyle(station.brand, station.id === selectedStationId)}
                     eventHandlers={{ click: () => setSelectedStationId(station.id) }}
                   >
                     <Popup>

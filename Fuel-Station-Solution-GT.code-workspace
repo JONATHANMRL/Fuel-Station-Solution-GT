@@ -1,0 +1,16 @@
+{
+  "folders": [
+    {
+      "name": "Fuel Station Solution GT",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "backend": true,
+      "database": true,
+      "node_modules": true,
+      "dist": true
+    }
+  }
+}

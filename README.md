@@ -2,6 +2,12 @@
 
 Aplicación React + Vite para consultar estaciones de combustible en Huehuetenango. Incluye 17 referencias reales aportadas por el usuario: ocho ubicaciones corroboradas en fuentes públicas y nueve sin coordenadas confirmadas. Los precios sin registro se muestran como «Precio no disponible». Consulta [el informe de fuentes y verificación](docs/estaciones-huehuetenango.md).
 
+## Área de trabajo frontend en Windows
+
+Abre `Fuel-Station-Solution-GT.code-workspace` en Visual Studio Code para una vista centrada en el frontend. Oculta en el explorador `backend`, `database`, `node_modules` y `dist`, conservándolos en el disco y manteniendo la raíz para los comandos npm. No elimina ni mueve archivos.
+
+Consulta [la revisión de estructura y los candidatos a limpieza](docs/estructura-proyecto.md). El backend y los scripts Oracle se conservan para la integración del equipo. Electron todavía no está implementado y no se ha generado un instalador.
+
 ## Ejecutar localmente
 
 Requisitos: Node.js 20.19 o posterior de la rama 20, o Node.js 22.12 o posterior. Instrucciones para PowerShell en Windows:
@@ -34,6 +40,12 @@ La limpieza del 20 de octubre de 2026 retiró los seis registros ficticios del f
 
 ## Preparar la integración futura
 
+La primera fase de lectura Oracle del backend está preparada. Consulta
+[la guía de integración Oracle, fase 1](docs/integracion-oracle-fase-1.md) para
+configuración privada, contrato JSON, pruebas offline y comandos de conexión
+futuros. React conserva por ahora sus servicios locales; no se activaron
+conexiones, escrituras ni autenticación.
+
 `src/services/gasolinaService.js` concentra las consultas y operaciones locales de estaciones, marcas, precios, historial, favoritos y notificaciones. La escritura de precios se rechaza antes de modificar datos. Todavía no hace solicitudes de red ni se conecta a una API. La futura integración debe enviar las operaciones administrativas a endpoints autenticados.
 
 ## Acceso administrativo: integración pendiente
@@ -46,7 +58,7 @@ El almacenamiento local está controlado por el navegador y no protege datos con
 
 Para habilitar administradores se necesita completar, dentro del backend existente:
 
-1. Conectar el almacenamiento de usuarios y roles. Los scripts Oracle ya proponen `USUARIOS`, `PASSWORD_HASH` y `ROLES`, pero no hay integración ni cuentas operativas. No se han ejecutado esos scripts.
+1. Conectar el almacenamiento de usuarios y definir la autorización administrativa. El respaldo actualizado contiene `USUARIO` y `CLAVE_HASH`, pero no incluye roles ni sesiones; la cuenta exportada tiene un hash de demostración pendiente. Esta parte no se conecta en la fase de lectura.
 2. Crear cuentas mediante una herramienta administrativa del servidor, asignar el rol ADMIN y generar allí un hash seguro con sal por contraseña. No reutilizar los hashes de ejemplo ni incluir contraseñas en el frontend, archivos versionados o registros.
 3. Implementar login con errores genéricos para credenciales incorrectas, límites de intentos y verificación del hash en el servidor.
 4. Implementar sesiones con vencimiento y revocación al cerrar sesión; para el cliente web, usar cookies HttpOnly y Secure en producción y protección CSRF cuando corresponda. Restringir CORS a los orígenes autorizados y usar HTTPS.
@@ -58,7 +70,7 @@ No se ha creado ninguna base de datos ni servidor nuevo, y no se han instalado d
 
 ## Componentes de servidor y base de datos
 
-- `backend/`: contiene `main.py`, una API de demostración FastAPI, `requirements.txt` y un entorno virtual generado (`.venv`). No es necesario para ejecutar el frontend. Las escrituras administrativas están bloqueadas mientras se integra autenticación.
-- `database/oracle/`: contiene `01_schema.sql` con definiciones de tablas e índices Oracle y `02_seed_demo.sql` con inserciones de datos de prueba. No es necesario para ejecutar el frontend.
+- `backend/`: conserva la misma API FastAPI y añade consultas de lectura Oracle, configuración privada, adaptación del contrato y pruebas simuladas. Las rutas heredadas de demostración están separadas de las lecturas Oracle. No es necesario para ejecutar el frontend local y las escrituras administrativas siguen bloqueadas. El entorno `.venv` heredado es de Linux/Python 3.9; no se reutiliza en Windows.
+- `database/oracle/`: contiene `GasolinaGT_Respaldo_Actualizado el 19 y 20 de octubre.sql`, analizado sin ejecutarlo. Los antiguos `01_schema.sql` y `02_seed_demo.sql` fueron retirados previamente. El backend no ejecuta ni lee el respaldo para atender peticiones: consultará las vistas de la base existente cuando se configure y autorice la conexión.
 
 Esos elementos corresponden a las responsabilidades de los compañeros de servidor y base de datos; conviene conservarlos mientras sean parte del trabajo compartido. Si luego se confirma que tendrán repositorios separados, se pueden retirar de esta copia del frontend con autorización del equipo.

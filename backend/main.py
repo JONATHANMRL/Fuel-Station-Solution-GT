@@ -1,22 +1,21 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title='Gasolina GT API', version='0.1.0')
+from .config import OracleSettings
+from .oracle_repository import OracleStationRepository
+from .read_api import router as read_router
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
+legacy_router = APIRouter(tags=['Demostración heredada — sin integración Oracle'])
 
+# Only the pre-existing favorites/notifications/disabled admin routes use these
+# legacy fixtures. Oracle GET /stations, /brands and /prices never read them.
 stations: List[Dict[str, Any]] = [
     {
         'id': 'est-1',
@@ -88,7 +87,7 @@ class PriceUpdateRequest(BaseModel):
     user: str = 'admin@gasolinagt.gt'
 
 
-@app.get('/health')
+@legacy_router.get('/health', tags=['Estado del proceso'])
 def health() -> Dict[str, Any]:
     return {
         'status': 'ok',
@@ -97,29 +96,12 @@ def health() -> Dict[str, Any]:
     }
 
 
-@app.get('/stations')
-def get_stations() -> Dict[str, Any]:
-    return {'stations': stations}
-
-
-@app.get('/brands')
-def get_brands() -> Dict[str, Any]:
-    groups: Dict[str, int] = {}
-    for station in stations:
-        groups[station['brand']] = groups.get(station['brand'], 0) + 1
-    return {
-        'brands': [
-            {'name': name, 'stations': count} for name, count in sorted(groups.items())
-        ]
-    }
-
-
-@app.get('/favorites')
+@legacy_router.get('/favorites')
 def get_favorites() -> Dict[str, Any]:
     return {'favorites': [station for station in stations if station['id'] in favorite_ids]}
 
 
-@app.post('/favorites')
+@legacy_router.post('/favorites')
 def toggle_favorite(request: FavoriteRequest) -> Dict[str, Any]:
     if request.station_id not in {station['id'] for station in stations}:
         raise HTTPException(status_code=404, detail='Gasolinera no encontrada')
@@ -130,12 +112,12 @@ def toggle_favorite(request: FavoriteRequest) -> Dict[str, Any]:
     return {'favorites': sorted(favorite_ids)}
 
 
-@app.get('/notifications')
+@legacy_router.get('/notifications')
 def get_notifications() -> Dict[str, Any]:
     return {'notifications': notifications}
 
 
-@app.post('/notifications/push/subscribe')
+@legacy_router.post('/notifications/push/subscribe')
 def subscribe_push(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         'ok': True,
@@ -153,7 +135,7 @@ def require_admin_access() -> None:
     )
 
 
-@app.post('/admin/prices', dependencies=[Depends(require_admin_access)])
+@legacy_router.post('/admin/prices', dependencies=[Depends(require_admin_access)])
 def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
     if request.fuel not in {'premium', 'regular', 'diesel'}:
         raise HTTPException(status_code=400, detail='Combustible no válido')
@@ -188,7 +170,38 @@ def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
     }
 
 
+def create_app(settings: OracleSettings | None = None, repository: Any = None) -> FastAPI:
+    """Create the existing API, with an injectable read repository for offline tests."""
+    resolved = settings if settings is not None else OracleSettings.from_env()
+    reader = repository if repository is not None else OracleStationRepository(resolved)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        # Pool creation is lazy: /health and offline tests never contact Oracle.
+        try:
+            yield
+        finally:
+            application.state.station_repository.close()
+
+    application = FastAPI(title='Gasolina GT API', version='0.2.0', lifespan=lifespan)
+    application.state.station_repository = reader
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(resolved.cors_origins),
+        allow_credentials=True,
+        allow_methods=['GET', 'POST'],
+        allow_headers=['Content-Type', 'Authorization'],
+    )
+    application.include_router(read_router)
+    application.include_router(legacy_router)
+    return application
+
+
+app = create_app()
+
+
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run('main:app', host='0.0.0.0', port=8000, reload=True)
+    # Run from the repository root: python -m backend.main
+    uvicorn.run('backend.main:app', host='127.0.0.1', port=8000)
