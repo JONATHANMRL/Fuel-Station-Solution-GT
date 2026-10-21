@@ -1,4 +1,7 @@
-import { demoNotifications, demoStations, defaultFavorites, fuelLabels } from '../data'
+import { fuelLabels } from '../data'
+import { requireAdminAccess } from './adminAuthService'
+import { realStations } from '../realStations'
+import { hasPrice } from '../utils/stationUtils'
 
 const STORAGE_KEYS = {
   stations: 'gasolina-gt:stations',
@@ -27,7 +30,26 @@ function writeLocal(key, value) {
 }
 
 export function getStations() {
-  return readLocal(STORAGE_KEYS.stations, demoStations)
+  const stored = readLocal(STORAGE_KEYS.stations, [])
+  const saved = new Map((Array.isArray(stored) ? stored : [])
+    .filter((station) => station && !station.isDemo && station.source !== 'demo')
+    .map((station) => [station.id, station]))
+  return realStations.map((station) => {
+    const previous = saved.get(station.id)
+    if (!previous) return clone(station)
+    const prices = Object.fromEntries(Object.keys(fuelLabels).map((fuel) =>
+      [fuel, hasPrice(previous.prices?.[fuel]) ? previous.prices[fuel] : station.prices[fuel]]))
+    return { ...clone(station), prices, updatedAt: Object.values(prices).some(hasPrice) ? previous.updatedAt ?? null : null }
+  })
+}
+
+const stationIds = new Set(realStations.map((station) => station.id))
+const isCatalogRecord = (record) => record && stationIds.has(record.stationId) &&
+  !record.isDemo && record.source !== 'demo'
+
+function readRecords(key) {
+  const stored = readLocal(key, [])
+  return Array.isArray(stored) ? stored : []
 }
 
 export function getBrands() {
@@ -40,7 +62,7 @@ export function getBrands() {
 
 export function getPrices(fuel) {
   return getStations()
-    .filter((station) => Number.isFinite(station.prices[fuel]))
+    .filter((station) => hasPrice(station.prices[fuel]))
     .map((station) => ({
       stationId: station.id,
       stationName: station.name,
@@ -54,26 +76,25 @@ export function getPrices(fuel) {
 }
 
 export function getHistory() {
-  return readLocal(STORAGE_KEYS.history, [])
+  return readRecords(STORAGE_KEYS.history).filter((record) => isCatalogRecord(record) && hasPrice(record.newPrice))
 }
 
 export function getNotifications() {
-  return readLocal(
-    STORAGE_KEYS.notifications,
-    demoNotifications.map((notification) => ({ ...notification, read: false, source: 'demo' })),
-  )
+  return readRecords(STORAGE_KEYS.notifications).filter((record) => isCatalogRecord(record) &&
+    typeof record.title === 'string' && typeof record.message === 'string' &&
+    !/demo|demostraci[oó]n|fictici/i.test(`${record.title} ${record.message}`))
 }
 
 export function saveNotifications(notifications) {
-  writeLocal(STORAGE_KEYS.notifications, notifications)
+  writeLocal(STORAGE_KEYS.notifications, notifications.filter(isCatalogRecord))
 }
 
 export function getFavorites() {
-  return readLocal(STORAGE_KEYS.favorites, defaultFavorites)
+  return [...new Set(readRecords(STORAGE_KEYS.favorites).filter((id) => stationIds.has(id)))]
 }
 
 export function saveFavorites(favorites) {
-  writeLocal(STORAGE_KEYS.favorites, favorites)
+  writeLocal(STORAGE_KEYS.favorites, [...new Set(favorites.filter((id) => stationIds.has(id)))])
 }
 
 export function getNotificationPreferences() {
@@ -97,6 +118,7 @@ export function markNotificationsRead() {
 }
 
 export function updatePrice({ stationId, fuel, price }) {
+  requireAdminAccess()
   const nextPrice = Number(price)
   if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
     throw new Error('Ingresa un precio mayor que cero.')
@@ -108,7 +130,7 @@ export function updatePrice({ stationId, fuel, price }) {
   if (!Object.hasOwn(station.prices, fuel)) throw new Error('Selecciona un combustible válido.')
 
   const previousPrice = station.prices[fuel]
-  if (Number(previousPrice.toFixed(2)) === Number(nextPrice.toFixed(2))) {
+  if (hasPrice(previousPrice) && Number(previousPrice.toFixed(2)) === Number(nextPrice.toFixed(2))) {
     return { changed: false, station, previousPrice }
   }
 
@@ -127,20 +149,22 @@ export function updatePrice({ stationId, fuel, price }) {
     previousPrice,
     newPrice: station.prices[fuel],
     updatedAt,
-    source: 'demo',
+    source: 'local',
   }
   writeLocal(STORAGE_KEYS.history, [change, ...getHistory()])
 
   const notification = {
     id: `notif-${Date.now()}`,
-    title: 'Gasolina GT · Cambio de precio (demo)',
-    message: `${station.name}: ${fuelLabels[fuel]} pasó de Q${previousPrice.toFixed(2)} a Q${station.prices[fuel].toFixed(2)} por galón.`,
+    title: 'Fuel Station Solution GT · Cambio de precio',
+    message: hasPrice(previousPrice)
+      ? `${station.name}: ${fuelLabels[fuel]} pasó de Q${previousPrice.toFixed(2)} a Q${station.prices[fuel].toFixed(2)} por galón.`
+      : `${station.name}: primer precio registrado de ${fuelLabels[fuel]}, Q${station.prices[fuel].toFixed(2)} por galón. Precio anterior no disponible.`,
     fuel,
-    type: station.prices[fuel] > previousPrice ? 'up' : 'down',
+    type: !hasPrice(previousPrice) ? 'new' : station.prices[fuel] > previousPrice ? 'up' : 'down',
     stationId,
     createdAt: updatedAt,
     read: false,
-    source: 'demo',
+    source: 'local',
   }
   writeLocal(STORAGE_KEYS.notifications, [notification, ...getNotifications()])
 

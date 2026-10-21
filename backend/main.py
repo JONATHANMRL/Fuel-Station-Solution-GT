@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -144,7 +144,16 @@ def subscribe_push(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.post('/admin/prices')
+def require_admin_access() -> None:
+    # Keep administrative writes disabled until credentials, roles and sessions
+    # are verified by this API. A client-supplied user name is not authorization.
+    raise HTTPException(
+        status_code=503,
+        detail='Administración deshabilitada: autenticación de administradores pendiente de integración.',
+    )
+
+
+@app.post('/admin/prices', dependencies=[Depends(require_admin_access)])
 def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
     if request.fuel not in {'premium', 'regular', 'diesel'}:
         raise HTTPException(status_code=400, detail='Combustible no válido')

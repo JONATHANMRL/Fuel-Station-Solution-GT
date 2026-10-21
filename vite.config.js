@@ -9,11 +9,11 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'brand-icon.svg'],
       manifest: {
-        name: 'Gasolina GT',
-        short_name: 'Gasolina GT',
+        name: 'Fuel Station Solution GT',
+        short_name: 'Fuel Station Solution GT',
         description: 'Consulta y notificación de precios de combustibles en Huehuetenango.',
-        theme_color: '#0d4d3b',
-        background_color: '#f4f9f5',
+        theme_color: '#123047',
+        background_color: '#f8fafc',
         display: 'standalone',
         start_url: '/',
         icons: [
