@@ -1,6 +1,6 @@
 # Fuel Station Solution GT — Aplicación
 
-Aplicación React + Vite para consultar estaciones de combustible en Huehuetenango. Incluye 17 referencias reales aportadas por el usuario: ocho ubicaciones corroboradas en fuentes públicas y nueve sin coordenadas confirmadas. Los precios sin registro se muestran como «Precio no disponible». Consulta [el informe de fuentes y verificación](docs/estaciones-huehuetenango.md).
+Aplicación React + Vite para consultar estaciones de combustible en Huehuetenango mediante FastAPI y Oracle. La fase 2 consume las consultas HTTP con carga, errores y actualización manual. Configura la URL accesible del backend según [la guía de fase 2](docs/integracion-oracle-fase-2.md). El catálogo de 17 referencias se conserva únicamente para conciliación; no alimenta la aplicación. Consulta [el informe de fuentes y verificación](docs/estaciones-huehuetenango.md).
 
 ## Área de trabajo frontend en Windows
 
@@ -27,10 +27,10 @@ npm run build
 
 ## Funcionalidades
 
-- Mapa Leaflet/OpenStreetMap centrado en Huehuetenango con ocho ubicaciones corroboradas; las otras estaciones se listan sin inventar coordenadas.
+- Mapa Leaflet/OpenStreetMap centrado en Huehuetenango. Las coordenadas Oracle siguen pendientes; existe un modo de demostración opcional y señalado para visualizarlas.
 - Filtros de búsqueda, marca, municipio, zona y combustible.
 - Comparador con orden ascendente/descendente y selección de hasta dos estaciones.
-- Favoritos, avisos, preferencias e historial guardados en el `localStorage` del navegador.
+- Favoritos Oracle, avisos y preferencias locales. Los favoritos del catálogo anterior se conservan por separado, sin equivalencias automáticas.
 - Interfaz de acceso administrativo con usuario, contraseña y mostrar/ocultar. La edición de precios sigue bloqueada; el formulario administrativo y el historial se conservan en el código.
 - PWA instalable con almacenamiento de recursos estáticos.
 
@@ -40,33 +40,32 @@ La limpieza del 20 de octubre de 2026 retiró los seis registros ficticios del f
 
 ## Preparar la integración futura
 
-La primera fase de lectura Oracle del backend está preparada. Consulta
+La primera fase de lectura Oracle del backend fue comprobada por el equipo en Oracle Linux. Consulta
 [la guía de integración Oracle, fase 1](docs/integracion-oracle-fase-1.md) para
 configuración privada, contrato JSON, pruebas offline y comandos de conexión
-futuros. React conserva por ahora sus servicios locales; no se activaron
-conexiones, escrituras ni autenticación.
+futuros. La [fase 2 de React](docs/integracion-oracle-fase-2.md) ya consume los
+endpoints; falta publicar la URL central por Tailscale para probar desde Windows.
 
-`src/services/gasolinaService.js` concentra las consultas y operaciones locales de estaciones, marcas, precios, historial, favoritos y notificaciones. La escritura de precios se rechaza antes de modificar datos. Todavía no hace solicitudes de red ni se conecta a una API. La futura integración debe enviar las operaciones administrativas a endpoints autenticados.
+`src/services/gasolinaService.js` consulta estaciones, marcas y precios mediante HTTP. No utiliza precios locales como sustituto de fallos de Oracle. Favoritos, avisos e historial anterior mantienen almacenamiento local; la escritura de precios sigue bloqueada. La integración administrativa futura necesitará endpoints autenticados.
 
-## Acceso administrativo: integración pendiente
+## Acceso administrativo
 
-La API existente no verifica contraseñas, roles ni sesiones. No hay cuentas habilitadas ni contraseñas de acceso en el frontend. El formulario no envía, registra ni persiste las credenciales: al enviarlo, muestra un mensaje de acceso no disponible y no crea una sesión. La contraseña solo permanece temporalmente en el formulario y se limpia al enviarlo o salir de la pantalla administrativa. Los detalles de integración se documentan aquí y no se muestran como avisos de desarrollo en el producto.
+La [fase 3 de autenticación](docs/integracion-oracle-fase-3.md) implementa login por
+correo, cookies HttpOnly/Secure, sesiones con vencimiento, logout y autorización
+administrativa en FastAPI mediante una lista privada de IDs. Utiliza `USUARIO` y
+`CLAVE_HASH` sin cambiar las diez tablas. La cuenta de lectura `GASOLINAGT_API`
+permanece separada de la cuenta administrativa propuesta.
 
-El panel y el historial administrativo no se renderizan. `updatePrice` rechaza cualquier actualización antes de escribir datos locales. Además, `POST /admin/prices` tiene una dependencia que responde HTTP 503 mientras no exista autenticación. Este bloqueo no valida identidades y no debe confundirse con un sistema de autenticación terminado.
+No hay administradores habilitados por defecto. El usuario del respaldo tiene un
+hash de prueba y no se autoriza automáticamente. El operador debe revisar los SQL
+separados, preparar la cuenta de servicio y un usuario humano con hash scrypt,
+y configurar el entorno privado. El almacén auxiliar de sesiones SQLite queda
+fuera de Oracle y del repositorio. No se guardan secretos de sesión en React.
 
-El almacenamiento local está controlado por el navegador y no protege datos contra la edición manual de `localStorage`. En la implementación real, los precios y los permisos deben ser responsabilidad de la API.
-
-Para habilitar administradores se necesita completar, dentro del backend existente:
-
-1. Conectar el almacenamiento de usuarios y definir la autorización administrativa. El respaldo actualizado contiene `USUARIO` y `CLAVE_HASH`, pero no incluye roles ni sesiones; la cuenta exportada tiene un hash de demostración pendiente. Esta parte no se conecta en la fase de lectura.
-2. Crear cuentas mediante una herramienta administrativa del servidor, asignar el rol ADMIN y generar allí un hash seguro con sal por contraseña. No reutilizar los hashes de ejemplo ni incluir contraseñas en el frontend, archivos versionados o registros.
-3. Implementar login con errores genéricos para credenciales incorrectas, límites de intentos y verificación del hash en el servidor.
-4. Implementar sesiones con vencimiento y revocación al cerrar sesión; para el cliente web, usar cookies HttpOnly y Secure en producción y protección CSRF cuando corresponda. Restringir CORS a los orígenes autorizados y usar HTTPS.
-5. Sustituir el bloqueo temporal de la API por verificación de sesión, cuenta activa y rol ADMIN en cada operación administrativa, incluidos cambios de precios y consulta del historial. Responder 401/403 según corresponda.
-6. Conectar la interfaz al login, comprobación de sesión y logout. Solo entonces el componente de acceso podrá renderizar el panel y mostrar un botón de cierre de sesión. No autorizar el actual escritor de precios locales con una bandera del navegador: las escrituras deben pasar a la API protegida.
-7. Probar sesiones expiradas, logout, permisos insuficientes y llamadas directas a la API sin sesión antes de habilitar las modificaciones.
-
-No se ha creado ninguna base de datos ni servidor nuevo, y no se han instalado dependencias para esta interfaz. El cierre de sesión queda pendiente junto con las sesiones reales; actualmente ningún envío del formulario crea una sesión.
+El panel aparece tras confirmar la cookie con el servidor y permite cerrar sesión.
+Las actualizaciones de precios siguen deshabilitadas en la interfaz y en la API,
+incluso para administradores autenticados. La conexión real de autenticación queda
+pendiente de configuración y prueba coordinada en Oracle Linux.
 
 ## Componentes de servidor y base de datos
 

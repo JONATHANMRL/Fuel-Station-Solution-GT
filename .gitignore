@@ -26,6 +26,10 @@ dist-ssr
 # Generated Python environments and caches (keep backend source and SQL).
 backend/.venv/
 backend/.venv-oracle/
+backend/.venv-tests/
+# Private runtime state must never be committed.
+*.sqlite3
+*.sqlite3-*
 __pycache__/
 *.py[cod]
 

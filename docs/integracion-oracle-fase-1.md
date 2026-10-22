@@ -1,5 +1,8 @@
 # Integración Oracle, fase 1: consultas de lectura
 
+Esta guía describe la entrega de la fase 1. Para el estado actual de React y la
+conexión por HTTP, consultar [la fase 2](integracion-oracle-fase-2.md).
+
 ## Alcance implementado
 
 Se aprovecha la misma aplicación FastAPI de `backend/main.py`. Se añaden lecturas

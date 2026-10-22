@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
+import os
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
-from .config import OracleSettings
+from .config import ConfigurationError, OracleSettings
 from .oracle_repository import OracleStationRepository
 from .read_api import router as read_router
+from .auth_api import router as auth_router, require_administrator, auth_error_handler
+from .auth_config import AuthSettings
+from .auth_core import AuthError, AuthService
+from .auth_repository import OracleUserRepository
 
 legacy_router = APIRouter(tags=['Demostración heredada — sin integración Oracle'])
 
@@ -126,54 +134,27 @@ def subscribe_push(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def require_admin_access() -> None:
-    # Keep administrative writes disabled until credentials, roles and sessions
-    # are verified by this API. A client-supplied user name is not authorization.
-    raise HTTPException(
-        status_code=503,
-        detail='Administración deshabilitada: autenticación de administradores pendiente de integración.',
-    )
-
-
-@legacy_router.post('/admin/prices', dependencies=[Depends(require_admin_access)])
+@legacy_router.post('/admin/prices', dependencies=[Depends(require_administrator)])
 def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
-    if request.fuel not in {'premium', 'regular', 'diesel'}:
-        raise HTTPException(status_code=400, detail='Combustible no válido')
-
-    station = next((item for item in stations if item['id'] == request.station_id), None)
-    if station is None:
-        raise HTTPException(status_code=404, detail='Gasolinera no encontrada')
-
-    previous_price = station['prices'][request.fuel]
-    station['prices'][request.fuel] = round(float(request.price), 2)
-    station['updatedAt'] = datetime.now().isoformat()
-    station['status'] = 'updated' if request.price >= previous_price else 'warning'
-
-    message = (
-        f"La {station['name']} actualizó la gasolina {request.fuel} de Q{previous_price:.2f} a Q{request.price:.2f} por galón."
-    )
-    notifications.insert(0, {
-        'id': f"notif-{len(notifications) + 1}",
-        'title': 'Gasolina GT — Nuevo precio',
-        'message': message,
-        'fuel': request.fuel,
-        'type': 'down' if request.price < previous_price else 'up',
-        'stationId': request.station_id,
-        'createdAt': datetime.now().isoformat(),
-    })
-    return {
-        'ok': True,
-        'station_id': request.station_id,
-        'previous_price': previous_price,
-        'new_price': round(float(request.price), 2),
-        'message': message,
-    }
+    # Even an authenticated administrator cannot write prices in phase 3.
+    raise HTTPException(status_code=503, detail={'code': 'PRICE_WRITES_DISABLED',
+                                               'message': 'La actualización de precios todavía no está habilitada.'})
 
 
-def create_app(settings: OracleSettings | None = None, repository: Any = None) -> FastAPI:
+def create_app(settings: OracleSettings | None = None, repository: Any = None,
+               auth_settings: AuthSettings | None = None, auth_service: Any = None) -> FastAPI:
     """Create the existing API, with an injectable read repository for offline tests."""
     resolved = settings if settings is not None else OracleSettings.from_env()
     reader = repository if repository is not None else OracleStationRepository(resolved)
+    policy = auth_settings if auth_settings is not None else AuthSettings.from_env(resolved.cors_origins)
+    if policy.enabled and not set(policy.allowed_origins).issubset(resolved.cors_origins):
+        raise ConfigurationError('AUTH_ALLOWED_ORIGINS debe ser un subconjunto de CORS_ORIGINS.')
+    user_reader = None
+    if auth_service is None:
+        credentials = replace(resolved, user=os.environ.get('AUTH_ORACLE_USER', ''),
+                              password=os.environ.get('AUTH_ORACLE_PASSWORD', ''))
+        user_reader = OracleUserRepository(credentials, resolved.user)
+        auth_service = AuthService(policy, user_reader)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -182,17 +163,31 @@ def create_app(settings: OracleSettings | None = None, repository: Any = None) -
             yield
         finally:
             application.state.station_repository.close()
+            if user_reader is not None:
+                user_reader.close()
 
     application = FastAPI(title='Gasolina GT API', version='0.2.0', lifespan=lifespan)
     application.state.station_repository = reader
+    application.state.auth_service = auth_service
+    application.add_exception_handler(AuthError, auth_error_handler)
+
+    @application.exception_handler(RequestValidationError)
+    async def sanitized_validation(request, error):
+        if request.url.path.startswith('/auth/'):
+            # Never echo a submitted password through FastAPI validation details.
+            return JSONResponse(status_code=422, content={'detail': {'code': 'INVALID_LOGIN_INPUT',
+                                'message': 'Revisa los campos de acceso.'}}, headers={'Cache-Control': 'no-store'})
+        from fastapi.exception_handlers import request_validation_exception_handler
+        return await request_validation_exception_handler(request, error)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved.cors_origins),
         allow_credentials=True,
         allow_methods=['GET', 'POST'],
-        allow_headers=['Content-Type', 'Authorization'],
+        allow_headers=['Content-Type', 'Authorization', 'X-Admin-Request'],
     )
     application.include_router(read_router)
+    application.include_router(auth_router)
     application.include_router(legacy_router)
     return application
 

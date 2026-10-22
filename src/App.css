@@ -1934,3 +1934,15 @@ button:disabled {
   cursor: default;
   opacity: .6;
 }
+
+/* Data states reuse the existing palette, typography and buttons. */
+.container > .api-status {
+  grid-column: 1 / -1;
+  margin: 0 0 16px;
+  overflow-wrap: anywhere;
+}
+
+.map-demo-option {
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}

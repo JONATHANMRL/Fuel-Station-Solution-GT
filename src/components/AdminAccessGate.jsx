@@ -1,26 +1,39 @@
-import { useState } from 'react'
-import { signInAdmin } from '../services/adminAuthService'
+import { useEffect, useMemo, useState } from 'react'
+import * as authService from '../services/adminAuthService'
+import { createAdminSessionController } from '../services/adminSessionController'
 
-// Administrative children are intentionally not rendered while authentication
-// is unavailable. No client-only session can unlock this screen.
-export default function AdminAccessGate() {
+export default function AdminAccessGate({ children }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [error, setError] = useState('')
+  const [{ session, busy, error }, setAuth] = useState({ session: null, busy: true, error: '' })
+  const controller = useMemo(() => createAdminSessionController(authService, setAuth), [])
 
-  const handleSubmit = (event) => {
+  useEffect(() => {
+    controller.check()
+    const focus = () => controller.check()
+    window.addEventListener('focus', focus)
+    return () => { controller.cancel(); window.removeEventListener('focus', focus) }
+  }, [controller])
+
+  const handleSubmit = async (event) => {
     event.preventDefault()
-    setError('')
     try {
-      signInAdmin({ username, password })
-    } catch (authError) {
-      setError(authError.message)
+      await controller.signIn({ username, password })
     } finally {
       setPassword('')
       setShowPassword(false)
     }
   }
+
+  if (session) return <>
+    <div className="section-heading">
+      <div><strong>{session.user.email}</strong><p className="table-note">Sesión administrativa · Actualización de precios deshabilitada.</p></div>
+      <button type="button" className="secondary-button" disabled={busy} onClick={controller.signOut}>Cerrar sesión</button>
+    </div>
+    {error && <p className="status-banner" role="alert">{error}</p>}
+    {children}
+  </>
 
   return (
     <div className="admin-access-layout">
@@ -37,19 +50,19 @@ export default function AdminAccessGate() {
           <p className="table-note">Acceso exclusivo para administradores.</p>
         </div>
         <label htmlFor="admin-username">
-          Nombre de usuario
-          <input id="admin-username" name="username" type="text" autoComplete="username"
-            required maxLength={120} value={username} placeholder="Tu nombre de usuario"
-            onChange={(event) => { setUsername(event.target.value); setError('') }} />
+          Correo electrónico
+          <input id="admin-username" name="username" type="email" autoComplete="username"
+            required maxLength={150} value={username} placeholder="Tu correo electrónico"
+            disabled={busy} onChange={(event) => setUsername(event.target.value)} />
         </label>
         <label htmlFor="admin-password">
           Contraseña
         </label>
         <div className="admin-password-field">
           <input id="admin-password" name="password" type={showPassword ? 'text' : 'password'}
-            autoComplete="current-password" required value={password}
+            autoComplete="current-password" required maxLength={1024} value={password} disabled={busy}
             aria-describedby={error ? 'admin-login-error' : undefined}
-            onChange={(event) => { setPassword(event.target.value); setError('') }} />
+            onChange={(event) => setPassword(event.target.value)} />
           <button type="button" className="secondary-button" aria-controls="admin-password"
             aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
             aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}>
@@ -57,7 +70,8 @@ export default function AdminAccessGate() {
           </button>
         </div>
         {error && <p id="admin-login-error" className="status-banner admin-login-error" role="alert">{error}</p>}
-        <button type="submit" className="primary-button">Iniciar sesión</button>
+        <button type="submit" className="primary-button" disabled={busy}>{busy ? 'Verificando…' : 'Iniciar sesión'}</button>
+        {!busy && <button type="button" className="secondary-button" onClick={controller.check}>Comprobar sesión</button>}
       </form>
     </div>
   )

@@ -52,7 +52,7 @@ class ReadAPITests(unittest.TestCase):
         with self.client as client:
             self.assertEqual(client.get('/prices?fuel=kerosene').status_code, 422)
             response = client.post('/admin/prices', json={'station_id': '1', 'fuel': 'regular', 'price': 1})
-            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.status_code, 403)  # HTTP admin access is rejected before any write.
 
     def test_health_is_liveness_only_and_does_not_query_oracle(self):
         with self.client as client:

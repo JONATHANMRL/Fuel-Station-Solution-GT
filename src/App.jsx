@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
 import { fuelLabels } from './data'
 import AdminAccessGate from './components/AdminAccessGate'
 import MapBrandLegend from './components/MapBrandLegend'
 import { getMapMarkerStyle } from './config/mapBrandStyles'
-import { comparePrices, getCheapestStation, getPriceDifference, hasCoordinates, hasPrice } from './utils/stationUtils'
+import { canDisplayOnMap, comparePrices, getAvailabilityLabel, getCheapestStation, getPriceDifference, hasAvailablePrice, hasCoordinates, hasPrice } from './utils/stationUtils'
+import useStationData from './hooks/useStationData'
 import {
   getFavorites,
   getHistory,
+  getLegacyFavorites,
   getNotificationPreferences,
   getNotifications,
-  getStations,
   markNotificationsRead,
   saveFavorites,
   saveNotifications,
@@ -18,6 +19,8 @@ import {
   updatePrice,
 } from './services/gasolinaService'
 import './App.css'
+
+const mapDemoAllowed = import.meta.env.VITE_MAP_DEMO_MODE === 'true'
 
 const navigation = [
   { id: 'inicio', label: 'Inicio' },
@@ -71,7 +74,7 @@ const formatDate = (value) =>
   value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString('es-GT', {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }) : 'Sin actualización de precios'
+  }) : 'Fecha no disponible'
 
 const brandColors = {
   Shell: '#f7d35b',
@@ -105,7 +108,9 @@ function Icon({ name, ...props }) {
 }
 
 function App() {
-  const [stations, setStations] = useState(getStations)
+  const initialComparison = useRef(false)
+  const [showPendingCoordinates, setShowPendingCoordinates] = useState(false)
+  const [legacyFavoriteCount] = useState(() => getLegacyFavorites().length)
   const [selectedFuel, setSelectedFuel] = useState('regular')
   const [brandFilter, setBrandFilter] = useState('Todas')
   const [municipioFilter, setMunicipioFilter] = useState('Todos')
@@ -113,27 +118,37 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('')
   const [favorites, setFavorites] = useState(getFavorites)
   const [notifications, setNotifications] = useState(getNotifications)
-  const [history, setHistory] = useState(getHistory)
+  const [history] = useState(getHistory)
   const [notificationPreferences, setNotificationPreferences] =
     useState(getNotificationPreferences)
   const [selectedStationId, setSelectedStationId] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [notificationPermission, setNotificationPermission] = useState('default')
   const [sortOrder, setSortOrder] = useState('asc')
-  const [compareStationIds, setCompareStationIds] = useState(() =>
-    getStations().filter((station) => hasPrice(station.prices.regular)).slice(0, 2).map((station) => station.id),
-  )
+  const [compareStationIds, setCompareStationIds] = useState([])
   const [adminSearch, setAdminSearch] = useState('')
-  const [priceForm, setPriceForm] = useState(() => {
-    const firstStation = getStations()[0]
-    return {
-      stationId: firstStation?.id ?? '',
-      fuel: 'regular',
-      newPrice: firstStation?.prices.regular ?? '',
-    }
-  })
+  const [priceForm, setPriceForm] = useState({ stationId: '', fuel: 'regular', newPrice: '' })
   const [showMobileNav, setShowMobileNav] = useState(false)
   const [activeSection, setActiveSection] = useState(getSectionFromHash)
+
+  const onStationsLoaded = useCallback((loadedStations) => {
+    const ids = new Set(loadedStations.map((station) => station.id))
+    setSelectedStationId((id) => ids.has(id) ? id : null)
+    if (!initialComparison.current) {
+      initialComparison.current = true
+      setCompareStationIds(loadedStations.filter((station) => hasAvailablePrice(station, 'regular')).slice(0, 2).map((station) => station.id))
+    } else {
+      setCompareStationIds((current) => current.filter((id) => ids.has(id)))
+    }
+    setBrandFilter((value) => value === 'Todas' || loadedStations.some((s) => s.brand === value) ? value : 'Todas')
+    setMunicipioFilter((value) => value === 'Todos' || loadedStations.some((s) => s.municipality === value) ? value : 'Todos')
+    setZoneFilter((value) => value === 'Todas' || loadedStations.some((s) => s.zone === value) ? value : 'Todas')
+    setPriceForm((previous) => {
+      const station = loadedStations.find((s) => s.id === previous.stationId) ?? loadedStations[0]
+      return { ...previous, stationId: station?.id ?? '', newPrice: station?.prices[previous.fuel] ?? '' }
+    })
+  }, [])
+  const { stations, status: loadStatus, error: loadError, fetchedAt, refresh } = useStationData(onStationsLoaded)
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -190,6 +205,7 @@ function App() {
       .map((station) => ({
         ...station,
         price: station.prices[selectedFuel],
+        available: hasAvailablePrice(station, selectedFuel),
       }))
       .sort((a, b) => comparePrices(a, b, sortOrder))
   }, [filteredStations, selectedFuel, sortOrder])
@@ -213,13 +229,13 @@ function App() {
         quantity,
         pendingCount: members.filter((station) => !hasCoordinates(station)).length,
         stations: members,
-        color: brandColors[name] ?? brandColors.default,
+        color: brandColors[name === 'Puma Energy' ? 'Puma' : name] ?? brandColors.default,
       }
     })
   }, [stations])
 
   const cheapestStation = getCheapestStation(comparisonRows)
-  const comparisonSelection = stations.filter((station) => compareStationIds.includes(station.id))
+  const comparisonSelection = stations.filter((station) => compareStationIds.includes(station.id) && hasAvailablePrice(station, selectedFuel))
   const comparisonDifference = getPriceDifference(comparisonSelection, selectedFuel)
   const currentSelection = stations.find((station) => station.id === selectedStationId)
   const unreadCount = notifications.filter((notification) => !notification.read).length
@@ -236,8 +252,12 @@ function App() {
     const nextFavorites = favorites.includes(stationId)
       ? favorites.filter((id) => id !== stationId)
       : [...favorites, stationId]
-    setFavorites(nextFavorites)
-    saveFavorites(nextFavorites)
+    try {
+      saveFavorites(nextFavorites)
+      setFavorites(nextFavorites)
+    } catch {
+      setStatusMessage('No fue posible guardar los favoritos en este equipo.')
+    }
   }
 
   const handleWebPushPermission = async () => {
@@ -268,38 +288,18 @@ function App() {
     event.preventDefault()
 
     try {
-      const result = updatePrice({
+      updatePrice({
         stationId: priceForm.stationId,
         fuel: priceForm.fuel,
         price: priceForm.newPrice,
       })
 
-      if (!result.changed) {
-        setStatusMessage('El precio no cambió.')
-        return
-      }
-
-      setStations(getStations())
-      setNotifications(getNotifications())
-      setHistory(getHistory())
-      setStatusMessage('Precio actualizado.')
-      setPriceForm((previous) => ({ ...previous, newPrice: result.station.prices[previous.fuel] }))
-
-      const preferences = getNotificationPreferences()
-      if (
-        preferences.priceChanges &&
-        (!preferences.favoritesOnly || favorites.includes(result.station.id)) &&
-        'Notification' in window &&
-        Notification.permission === 'granted'
-      ) {
-        new Notification(result.notification.title, { body: result.notification.message })
-      }
     } catch (error) {
       setStatusMessage(error.message)
     }
   }
 
-  const stationList = filteredStations.filter(hasCoordinates)
+  const stationList = filteredStations.filter((station) => canDisplayOnMap(station, showPendingCoordinates && mapDemoAllowed))
   const pendingLocations = filteredStations.filter((station) => !hasCoordinates(station))
   const adminCurrentStation = stations.find((station) => station.id === priceForm.stationId)
 
@@ -310,10 +310,13 @@ function App() {
   }
 
   const selectStationForComparison = (stationId) => {
+    const availableIds = new Set(stations.filter((station) => hasAvailablePrice(station, selectedFuel)).map((station) => station.id))
+    if (!availableIds.has(stationId)) return
     setCompareStationIds((currentIds) => {
-      if (currentIds.includes(stationId)) return currentIds.filter((id) => id !== stationId)
-      if (currentIds.length < 2) return [...currentIds, stationId]
-      return [currentIds[1], stationId]
+      const validIds = currentIds.filter((id) => availableIds.has(id))
+      if (validIds.includes(stationId)) return validIds.filter((id) => id !== stationId)
+      if (validIds.length < 2) return [...validIds, stationId]
+      return [validIds[1], stationId]
     })
   }
 
@@ -323,8 +326,12 @@ function App() {
     )
     setNotifications(updatedNotifications)
     saveNotifications(updatedNotifications)
-    setSelectedStationId(notification.stationId)
-    navigateTo('mapa')
+    if (stations.some((station) => station.id === notification.stationId)) {
+      setSelectedStationId(notification.stationId)
+      navigateTo('mapa')
+    } else {
+      setStatusMessage('La estación de este aviso local no está en el catálogo consultado. No se asignará a otra estación.')
+    }
   }
 
   const handleMarkAllRead = () => {
@@ -375,6 +382,9 @@ function App() {
         </div>
         <div className="topbar-actions">
           <span className="workspace-badge">Huehuetenango, Guatemala</span>
+          <button type="button" className="secondary-button" onClick={refresh} disabled={loadStatus === 'loading'}>
+            {loadStatus === 'loading' ? 'Consultando…' : loadStatus === 'error' ? 'Reintentar' : 'Actualizar'}
+          </button>
           <button type="button" className="mobile-menu-button" aria-controls="main-navigation"
             aria-expanded={showMobileNav} onClick={() => setShowMobileNav((open) => !open)}>
             {showMobileNav ? 'Cerrar menú' : 'Menú'}
@@ -392,6 +402,11 @@ function App() {
       </header>
 
       <main id="main-content" className="container" data-view={activeSection} tabIndex={-1}>
+        <div className="api-status status-banner" role={loadStatus === 'error' ? 'alert' : 'status'} aria-live="polite">
+          {loadStatus === 'loading' && 'Consultando estaciones y precios…'}
+          {loadStatus === 'error' && loadError}
+          {loadStatus === 'ready' && `${stations.length} estaciones consultadas en Oracle · Consulta: ${formatDate(fetchedAt)}`}
+        </div>
         <section id="inicio" className="hero-panel" hidden={activeSection !== 'inicio'}>
           <div className="hero-copy">
             <span className="eyebrow">Huehuetenango, Guatemala</span>
@@ -427,11 +442,11 @@ function App() {
           <div className="hero-stats">
             <div className="stat-card">
               <span>Gasolineras</span>
-              <strong>{stations.length}</strong>
+              <strong>{loadStatus === 'ready' ? stations.length : '—'}</strong>
             </div>
             <div className="stat-card">
               <span>Marcas</span>
-              <strong>{brandSummary.length}</strong>
+              <strong>{loadStatus === 'ready' ? brandSummary.length : '—'}</strong>
             </div>
             <div className="stat-card">
               <span>{fuelLabels[selectedFuel]} más económico</span>
@@ -463,12 +478,13 @@ function App() {
                 <span className="featured-brand">{station.brand}</span>
                 <strong>{station.name}</strong>
                 <span className={`featured-price${station.id === cheapestStation?.id ? ' price-favorable' : ''}${!hasPrice(station.price) ? ' price-unavailable' : ''}`}>{formatMoney(station.price)}{hasPrice(station.price) && <small> / galón</small>}</span>
+                <small>{getAvailabilityLabel(station, selectedFuel)}</small>
                 <span className="featured-place">{formatLocation(station)}</span>
               </button>
             ))}
             {comparisonRows.length === 0 && <p className="empty-state">No se encontraron gasolineras.</p>}
           </div>
-          {history.length > 0 && (
+          {history.length > 0 && stations.some((station) => station.id === history[0].stationId) && (
             <div className="recent-change">
               <span className="recent-icon" aria-hidden="true">↗</span>
               <div>
@@ -491,6 +507,15 @@ function App() {
               <p className="section-description">Consulta ubicaciones y precios de combustibles por galón.</p>
             </div>
           </div>
+
+          {mapDemoAllowed && <label className="switch-row map-demo-option">
+            <input type="checkbox" checked={showPendingCoordinates}
+              onChange={(event) => setShowPendingCoordinates(event.target.checked)} />
+            Demostración: mostrar coordenadas pendientes de verificación
+          </label>}
+          {showPendingCoordinates && mapDemoAllowed && <p className="status-banner" role="status">
+            Modo de demostración: las ubicaciones dibujadas desde Oracle no están verificadas. No se consideran ubicaciones confirmadas.
+          </p>}
 
           <div className="toolbar-row">
             <input
@@ -555,22 +580,23 @@ function App() {
                         <small>
                           {station.address} · {station.municipality}
                         </small>
+                        {!hasCoordinates(station) && <small>Demostración · Coordenadas pendientes de verificación</small>}
                         <ul>
-                          <li className="fuel-regular"><span>Regular</span><strong>{formatMoney(station.prices.regular)}</strong></li>
-                          <li className="fuel-premium"><span>Superior</span><strong>{formatMoney(station.prices.premium)}</strong></li>
-                          <li className="fuel-diesel"><span>Diésel</span><strong>{formatMoney(station.prices.diesel)}</strong></li>
+                          <li className="fuel-regular"><span>Regular · {getAvailabilityLabel(station, 'regular')}</span><strong>{formatMoney(station.prices.regular)}</strong></li>
+                          <li className="fuel-premium"><span>Superior · {getAvailabilityLabel(station, 'premium')}</span><strong>{formatMoney(station.prices.premium)}</strong></li>
+                          <li className="fuel-diesel"><span>Diésel · {getAvailabilityLabel(station, 'diesel')}</span><strong>{formatMoney(station.prices.diesel)}</strong></li>
                         </ul>
                         <div className="popup-actions">
                           <button type="button" onClick={() => setSelectedStationId(station.id)}>
                             Ver detalles
                           </button>
-                          <a
+                          {hasCoordinates(station) && <a
                             href={`https://www.google.com/maps/dir/?api=1&destination=${station.lat},${station.lng}`}
                             target="_blank"
                             rel="noreferrer"
                           >
                             Navegar
-                          </a>
+                          </a>}
                         </div>
                       </div>
                     </Popup>
@@ -592,21 +618,21 @@ function App() {
                   </button>
                   <span className="section-tag">Gasolinera seleccionada</span>
                   <h3 id="selected-station-title">{currentSelection.name}</h3>
-                  <span className="status-chip">{hasCoordinates(currentSelection) ? 'Ubicación disponible' : 'Ubicación no disponible'}</span>
+                  <span className="status-chip">{hasCoordinates(currentSelection) ? 'Ubicación verificada' : 'Ubicación pendiente de verificación'}</span>
                   <p className="station-meta">
                     {currentSelection.brand} · {currentSelection.municipality}
                   </p>
                   <ul className="station-prices">
                     <li className="fuel-premium">
-                      <span>Gasolina superior</span>
+                      <span>Gasolina superior · {getAvailabilityLabel(currentSelection, 'premium')}</span>
                       <strong className={!hasPrice(currentSelection.prices.premium) ? 'price-unavailable' : undefined}>{formatMoney(currentSelection.prices.premium)}</strong>
                     </li>
                     <li className="fuel-regular">
-                      <span>Gasolina regular</span>
+                      <span>Gasolina regular · {getAvailabilityLabel(currentSelection, 'regular')}</span>
                       <strong className={!hasPrice(currentSelection.prices.regular) ? 'price-unavailable' : undefined}>{formatMoney(currentSelection.prices.regular)}</strong>
                     </li>
                     <li className="fuel-diesel">
-                      <span>Diésel</span>
+                      <span>Diésel · {getAvailabilityLabel(currentSelection, 'diesel')}</span>
                       <strong className={!hasPrice(currentSelection.prices.diesel) ? 'price-unavailable' : undefined}>{formatMoney(currentSelection.prices.diesel)}</strong>
                     </li>
                   </ul>
@@ -637,7 +663,7 @@ function App() {
           </div>
           {pendingLocations.length > 0 && (
             <div className="admin-history">
-              <div className="history-heading"><div><span className="section-tag">Otras estaciones</span><h3>{pendingLocations.length} estaciones sin ubicación disponible</h3></div></div>
+              <div className="history-heading"><div><span className="section-tag">Ubicaciones pendientes</span><h3>{pendingLocations.length} estaciones sin ubicación verificada</h3></div></div>
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Gasolinera</th><th>Marca</th><th>Dirección o referencia</th><th>Detalle</th></tr></thead>
@@ -760,6 +786,7 @@ function App() {
                   <th>Marca</th>
                   <th>Ubicación</th>
                   <th>Precio</th>
+                  <th>Disponibilidad</th>
                   <th>Actualizado</th>
                 </tr>
               </thead>
@@ -770,9 +797,9 @@ function App() {
                       <input
                         type="checkbox"
                         aria-label={`Incluir ${station.name} en la comparación`}
-                        checked={compareStationIds.includes(station.id)}
-                        disabled={!hasPrice(station.price)}
-                        title={!hasPrice(station.price) ? 'Precio no disponible para este combustible' : undefined}
+                        checked={station.available && compareStationIds.includes(station.id)}
+                        disabled={!station.available}
+                        title={!station.available ? 'Combustible sin precio disponible para comparar' : undefined}
                         onChange={() => selectStationForComparison(station.id)}
                       />
                     </td>
@@ -783,6 +810,7 @@ function App() {
                       {formatMoney(station.price)}
                       {station.id === cheapestStation?.id && <span className="best-price-tag">Más bajo</span>}
                     </td>
+                    <td>{getAvailabilityLabel(station, selectedFuel)}</td>
                     <td>{formatDate(station.updatedAt)}</td>
                   </tr>
                 ))}
@@ -804,8 +832,8 @@ function App() {
               </span>
             </div>
           )}
-          {comparisonSelection.length === 2 && comparisonDifference === null && <p className="table-note">No se calcula la diferencia: falta el precio del combustible seleccionado.</p>}
-          <p className="table-note">Selecciona hasta dos estaciones con precios registrados para comparar el costo por galón.</p>
+          {compareStationIds.length > comparisonSelection.length && <p className="table-note">Una selección anterior no participa: falta un precio disponible o el combustible está agotado.</p>}
+          <p className="table-note">Selecciona hasta dos estaciones activas con combustible disponible. Los precios de combustibles agotados se muestran como referencia y no se comparan.</p>
         </section>
 
         <section id="favoritos" className="section-card" hidden={activeSection !== 'favoritos'}>
@@ -816,6 +844,7 @@ function App() {
             </div>
           </div>
 
+          {legacyFavoriteCount > 0 && <p className="table-note">Tus favoritos del catálogo anterior permanecen guardados en este equipo. Vuelve a elegir las estaciones del catálogo de Oracle; no se asignan equivalencias automáticamente.</p>}
           <div className="favorite-grid">
             {favoriteStations.map((station) => (
               <article key={station.id} className="favorite-card">
@@ -826,6 +855,7 @@ function App() {
                   </small>
                 </div>
                 <span className={!hasPrice(station.prices.regular) ? 'price-unavailable' : undefined}>{formatMoney(station.prices.regular)}{hasPrice(station.prices.regular) && <small> / galón</small>}</span>
+                <small>{getAvailabilityLabel(station, 'regular')}</small>
                 <div className="favorite-actions">
                   <button type="button" onClick={() => {
                     setSelectedStationId(station.id)
@@ -856,6 +886,7 @@ function App() {
             </button>
           </div>
 
+          <p className="table-note">Avisos guardados en este equipo.</p>
           <div className="notification-settings">
             <div>
               <strong>Preferencias de alertas</strong>
@@ -981,6 +1012,7 @@ function App() {
                     type="number"
                     min="0.01"
                     step="0.01"
+                    disabled
                     required
                     value={priceForm.newPrice}
                     onChange={(event) =>
@@ -989,7 +1021,7 @@ function App() {
                   />
                 </label>
                 <div className="admin-submit">
-                  <button type="submit" className="primary-button">
+                  <button type="submit" className="primary-button" disabled title="La actualización de precios no está habilitada en esta fase">
                     Guardar cambios
                   </button>
                 </div>
