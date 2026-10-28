@@ -19,7 +19,7 @@ export default function AdminAccessGate({ children }) {
 
   if (session) return <>
     <div className="section-heading">
-      <div><strong>{session.user.email}</strong><p className="table-note">Sesión administrativa · Permisos verificados por el servidor.</p></div>
+      <div><strong>{session.user.email}</strong><p className="table-note">Sesión administrativa</p></div>
       <button type="button" className="secondary-button" disabled={busy} onClick={controller.signOut}>Cerrar sesión</button>
     </div>
     {error && <p className="status-banner" role="alert">{error}</p>}

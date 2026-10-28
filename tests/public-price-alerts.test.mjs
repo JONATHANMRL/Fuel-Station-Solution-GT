@@ -147,7 +147,7 @@ test('empty history is a successful empty state; public section stays independen
   assert.equal(states.at(-1).error, '')
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
   const publicComponent = readFileSync(new URL('../src/components/PublicPriceAlerts.jsx', import.meta.url), 'utf8')
-  assert.ok(app.includes('<PublicPriceAlerts />'))
+  assert.ok(app.includes("<PublicPriceAlerts active={activeSection === 'notificaciones'} />"))
   assert.ok(app.includes('Mis notificaciones'))
   assert.ok(publicComponent.includes('Avisos generales'))
   assert.ok(!publicComponent.includes('AdminAccessGate'))

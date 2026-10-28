@@ -1,4 +1,10 @@
 // Separate lifecycle and namespace from personal notifications, no session/storage.
+export function activatePublicPriceAlerts(loader, active, defer = queueMicrotask) {
+  let disposed = false
+  if (active) defer(() => { if (!disposed) loader.start() })
+  return () => { disposed = true; if (active) loader.cancel() }
+}
+
 export function createPublicPriceAlertsLoader(fetchPage, onChange, { schedule = setTimeout, unschedule = clearTimeout } = {}) {
   let version = 0, timer, active, running = false
   let alerts = [], nextCursor = null, activatedAt = null, error = '', fetchedAt = null

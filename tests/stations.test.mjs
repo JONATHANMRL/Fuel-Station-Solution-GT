@@ -175,14 +175,15 @@ test('price writes stay blocked for every Oracle station and fuel', () => {
   assert.deepEqual(writes, [])
 })
 
-test('seven sections and admin gate are retained, with an explicit demo warning', () => {
+test('seven sections and admin gate are retained with a clean public presentation', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
   const login = readFileSync(new URL('../src/components/AdminAccessGate.jsx', import.meta.url), 'utf8')
   for (const id of ['inicio', 'mapa', 'marcas', 'comparar', 'favoritos', 'notificaciones', 'admin']) {
     assert.ok(app.includes(`id="${id}"`))
   }
   assert.ok(app.includes('<AdminAccessGate>'))
-  assert.ok(app.includes('Modo de demostración:'))
+  assert.ok(app.includes('Explorar gasolineras'))
+  assert.ok(!app.includes('Modo de demostración:'))
   assert.ok(app.includes('No tienes notificaciones.'))
   assert.ok(login.includes('if (session)'))
   assert.ok(login.includes('{children}'))

@@ -1,5 +1,10 @@
 # Ampliación de fase 5: avisos públicos de precios
 
+Actualización posterior de presentación y polling: ver
+[ajustes finales de interfaz](ajustes-finales-interfaz.md). Se conservan aquí los
+contratos y decisiones técnicas; la UI actual oculta las etiquetas de procedencia
+y limita la consulta pública periódica a la sección Notificaciones activa.
+
 ## Alcance
 
 Se añade GET `/public/price-alerts`, sin login, y el apartado «Avisos generales»

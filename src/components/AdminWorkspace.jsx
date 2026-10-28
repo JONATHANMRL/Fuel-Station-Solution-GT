@@ -65,7 +65,7 @@ export default function AdminWorkspace({ stations, onSaved }) {
       // Once confirmed, refresh the existing public loader (map/comparator included).
       await onSaved()
       if (lifecycle.current.alive) {
-        setMessage('Precio guardado en Oracle.')
+        setMessage('Precio guardado correctamente.')
         setForm((current) => ({ ...current, newPrice: '' }))
         await load()
       }
@@ -110,13 +110,12 @@ export default function AdminWorkspace({ stations, onSaved }) {
         </div>
       </form>
       <div className="admin-history">
-        <div className="history-heading"><div><span className="section-tag">Actualizaciones · Oracle</span><h3>Historial de modificaciones</h3></div></div>
-        <p className="table-note">Oracle no guarda el administrador en PRECIO. No se atribuyen modificaciones sin ese dato.</p>
+        <div className="history-heading"><div><span className="section-tag">Actualizaciones</span><h3>Historial de modificaciones</h3></div></div>
         {data.history.length ? <div className="table-wrap"><table><thead><tr>
           <th>Gasolinera</th><th>Combustible</th><th>Anterior</th><th>Nuevo</th><th>Fecha</th><th>Administrador</th>
         </tr></thead><tbody>{data.history.map((row) => <tr key={row.id}>
           <td>{row.stationName}</td><td>{fuelLabels[row.fuel]}</td><td>{money(row.previousPrice)}</td><td>{money(row.newPrice)}</td>
-          <td>{new Date(row.updatedAt).toLocaleString('es-GT')}</td><td>No registrado en Oracle</td>
+          <td>{new Date(row.updatedAt).toLocaleString('es-GT')}</td><td>No registrado</td>
         </tr>)}</tbody></table></div> : <p className="empty-state">{loading ? 'Consultando historial…' : 'Aún no hay modificaciones registradas.'}</p>}
         <div className="field-row">
           <button className="secondary-button" type="button" disabled={loading || saving || offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Anterior</button>
