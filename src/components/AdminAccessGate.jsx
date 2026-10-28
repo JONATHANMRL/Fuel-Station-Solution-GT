@@ -1,20 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import * as authService from '../services/adminAuthService'
-import { createAdminSessionController } from '../services/adminSessionController'
+import { useState } from 'react'
+import { useAdminSession } from '../hooks/useAdminSession.js'
 
 export default function AdminAccessGate({ children }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [{ session, busy, error }, setAuth] = useState({ session: null, busy: true, error: '' })
-  const controller = useMemo(() => createAdminSessionController(authService, setAuth), [])
-
-  useEffect(() => {
-    controller.check()
-    const focus = () => controller.check()
-    window.addEventListener('focus', focus)
-    return () => { controller.cancel(); window.removeEventListener('focus', focus) }
-  }, [controller])
+  const { session, busy, error, controller } = useAdminSession()
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -28,7 +19,7 @@ export default function AdminAccessGate({ children }) {
 
   if (session) return <>
     <div className="section-heading">
-      <div><strong>{session.user.email}</strong><p className="table-note">Sesión administrativa · Actualización de precios deshabilitada.</p></div>
+      <div><strong>{session.user.email}</strong><p className="table-note">Sesión administrativa · Permisos verificados por el servidor.</p></div>
       <button type="button" className="secondary-button" disabled={busy} onClick={controller.signOut}>Cerrar sesión</button>
     </div>
     {error && <p className="status-banner" role="alert">{error}</p>}

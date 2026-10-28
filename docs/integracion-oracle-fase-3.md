@@ -78,8 +78,12 @@ contraseña, token, cookie ni una bandera de permiso en localStorage/sessionStor
 `POST /auth/logout` revoca en el servidor y elimina la cookie, incluso si el token
 ya no existe. Si el logout falla por red, React informa el error y no afirma que
 la sesión haya sido revocada. El panel comprueba sesión al entrar y recuperar el
-foco, y se cierra al alcanzar su vencimiento local. El backend es la autoridad de
-permisos y vencimiento; los equipos deben tener la hora sincronizada.
+foco y cada 30 segundos mientras está autenticado. FastAPI confirma permisos y
+vencimiento: React no descarta una respuesta válida comparando `expiresAt` con
+el reloj de Windows. Un 401/403 devuelve al formulario; un fallo de red o servidor
+cierra el acceso visual con su error correspondiente, sin afirmar que venció.
+Los temporizadores del navegador pueden demorarse en segundo plano; cada operación
+administrativa sigue obligada a validar permisos en el servidor.
 
 La sesión dura 1800 segundos por defecto, sin renovación deslizante. Un login
 nuevo rota la cookie anterior del mismo navegador. Otras sesiones del usuario
@@ -204,6 +208,62 @@ logout fallido y respuestas atrasadas sin reabrir el panel.
 
 No se hizo commit ni push. La prueba de integración con Oracle y navegador real
 requiere la configuración anterior y autorización del equipo.
+
+## Corrección de sincronización del panel administrativo
+
+Se reprodujeron con respuestas simuladas tres defectos del controlador anterior:
+
+1. Una respuesta autenticada HTTP 200 se descartaba cuando `expiresAt` parecía
+   anterior al reloj de Windows. El cliente mostraba «La sesión ha vencido» sin
+   consultar nuevamente al servidor. Esto demuestra el defecto de comparación;
+   no confirma un desfase concreto en la VM real, cuya hora no se consultó.
+2. Recuperar el foco iniciaba otra comprobación y podía cancelar el login y su
+   confirmación de cookie. Una respuesta anterior podía prevalecer sobre ese flujo.
+3. Un temporizador antiguo ya encolado podía cancelar una autenticación posterior.
+
+El controlador ahora da prioridad a login/logout, agrupa comprobaciones simultáneas
+y descarta respuestas y temporizadores de operaciones anteriores. También permite
+la secuencia setup-cleanup-setup de StrictMode sin publicar resultados descartados.
+Un éxito limpia los errores anteriores, incluido un `SESSION_INVALID` previo.
+«Comprobar sesión» utiliza la misma comprobación que actualiza el estado de React.
+
+Se mantiene el contrato `{ authenticated: true, user: { id, email, role }, expiresAt }`:
+ID normalizado a cadena, rol `admin`, correo no vacío y fecha válida. Una respuesta
+incompatible muestra un error de autenticación, nunca un vencimiento inventado.
+`expiresAt` sigue disponible como metadato; no otorga ni revoca permisos localmente.
+La revalidación periódica no renueva la sesión absoluta del servidor.
+
+No se modificaron `AdminAccessGate.jsx`, `adminAuthService.js` ni `App.jsx`:
+su integración ya muestra el panel y «Cerrar sesión» al recibir el estado autenticado.
+Las tres peticiones de autenticación conservan `credentials: 'include'`, HTTPS,
+CSRF y confirmación de la cookie HttpOnly. No se cambió Oracle ni FastAPI.
+Un HTTP 200 de `/auth/session` después del login confirma que la cookie funciona
+en ese recorrido; no hay evidencia de que sea necesario relajar CORS o cookies.
+
+### Comprobación manual desde Windows
+
+1. Cargar la versión actual del frontend mediante el flujo habitual de desarrollo
+   o compilación. Si había una PWA instalada, comprobar que se actualizó también
+   su service worker y cerrar las pestañas antiguas. No basta con probar un bundle
+   anterior almacenado en caché.
+2. Abrir «Panel admin» e iniciar sesión con la cuenta humana existente. En DevTools,
+   comprobar POST `/auth/login` 200 y GET `/auth/session` 200 con `authenticated: true`
+   y `role: "admin"`. Debe aparecer el correo y el botón «Cerrar sesión», sin error.
+3. Cambiar de ventana y regresar; navegar a otra sección y volver al panel; recargar.
+   Con la cookie vigente, GET `/auth/session` 200 debe mantener/restaurar el panel.
+   Si aparece el formulario tras un error de conexión, recuperar la conexión y usar
+   «Comprobar sesión»: una respuesta válida debe abrir el panel y limpiar el error.
+4. Cerrar sesión: POST `/auth/logout` 204 debe volver al formulario sin mensaje de
+   vencimiento. Una comprobación posterior debe responder 401; no debe reaparecer
+   el panel por una respuesta atrasada.
+5. Iniciar sesión nuevamente y esperar el TTL ya configurado, sin modificar cuentas
+   ni contraseñas. El siguiente GET `/auth/session` 401 debe cerrar el panel: se
+   comprueba cada 30 segundos en una pestaña activa y al recuperar el foco.
+6. Confirmar que mapa, favoritos, filtros y comparador siguen disponibles, y que
+   guardar precios permanece deshabilitado incluso con la sesión válida.
+
+Las pruebas HTTP automatizadas usan respuestas simuladas; no reproducen todas las
+políticas de cookies del navegador ni sustituyen esta comprobación real por Tailscale.
 
 ## Referencias
 

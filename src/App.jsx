@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
 import { fuelLabels } from './data'
 import AdminAccessGate from './components/AdminAccessGate'
+import AdminWorkspace from './components/AdminWorkspace'
+import AdminSessionProvider from './components/AdminSessionProvider.jsx'
+import useOracleNotifications from './hooks/useOracleNotifications.js'
+import { markOracleNotificationRead } from './services/oracleOperationsService.js'
 import MapBrandLegend from './components/MapBrandLegend'
 import { getMapMarkerStyle } from './config/mapBrandStyles'
 import { canDisplayOnMap, comparePrices, getAvailabilityLabel, getCheapestStation, getPriceDifference, hasAvailablePrice, hasCoordinates, hasPrice } from './utils/stationUtils'
@@ -12,11 +16,9 @@ import {
   getLegacyFavorites,
   getNotificationPreferences,
   getNotifications,
-  markNotificationsRead,
   saveFavorites,
   saveNotifications,
   saveNotificationPreferences,
-  updatePrice,
 } from './services/gasolinaService'
 import './App.css'
 
@@ -107,7 +109,7 @@ function Icon({ name, ...props }) {
   )
 }
 
-function App() {
+function Application() {
   const initialComparison = useRef(false)
   const [showPendingCoordinates, setShowPendingCoordinates] = useState(false)
   const [legacyFavoriteCount] = useState(() => getLegacyFavorites().length)
@@ -117,7 +119,8 @@ function App() {
   const [zoneFilter, setZoneFilter] = useState('Todas')
   const [searchTerm, setSearchTerm] = useState('')
   const [favorites, setFavorites] = useState(getFavorites)
-  const [notifications, setNotifications] = useState(getNotifications)
+  const [localNotifications, setLocalNotifications] = useState(getNotifications)
+  const oracleNotices = useOracleNotifications()
   const [history] = useState(getHistory)
   const [notificationPreferences, setNotificationPreferences] =
     useState(getNotificationPreferences)
@@ -126,8 +129,6 @@ function App() {
   const [notificationPermission, setNotificationPermission] = useState('default')
   const [sortOrder, setSortOrder] = useState('asc')
   const [compareStationIds, setCompareStationIds] = useState([])
-  const [adminSearch, setAdminSearch] = useState('')
-  const [priceForm, setPriceForm] = useState({ stationId: '', fuel: 'regular', newPrice: '' })
   const [showMobileNav, setShowMobileNav] = useState(false)
   const [activeSection, setActiveSection] = useState(getSectionFromHash)
 
@@ -143,10 +144,6 @@ function App() {
     setBrandFilter((value) => value === 'Todas' || loadedStations.some((s) => s.brand === value) ? value : 'Todas')
     setMunicipioFilter((value) => value === 'Todos' || loadedStations.some((s) => s.municipality === value) ? value : 'Todos')
     setZoneFilter((value) => value === 'Todas' || loadedStations.some((s) => s.zone === value) ? value : 'Todas')
-    setPriceForm((previous) => {
-      const station = loadedStations.find((s) => s.id === previous.stationId) ?? loadedStations[0]
-      return { ...previous, stationId: station?.id ?? '', newPrice: station?.prices[previous.fuel] ?? '' }
-    })
   }, [])
   const { stations, status: loadStatus, error: loadError, fetchedAt, refresh } = useStationData(onStationsLoaded)
 
@@ -238,13 +235,9 @@ function App() {
   const comparisonSelection = stations.filter((station) => compareStationIds.includes(station.id) && hasAvailablePrice(station, selectedFuel))
   const comparisonDifference = getPriceDifference(comparisonSelection, selectedFuel)
   const currentSelection = stations.find((station) => station.id === selectedStationId)
+  const notifications = oracleNotices.notifications.filter((notice) => notificationPreferences.priceChanges &&
+    (!notificationPreferences.favoritesOnly || favorites.includes(notice.stationId)))
   const unreadCount = notifications.filter((notification) => !notification.read).length
-  const adminStations = stations.filter((station) =>
-    [station.name, station.brand, station.zone]
-      .join(' ')
-      .toLowerCase()
-      .includes(adminSearch.trim().toLowerCase()),
-  )
 
   const handleSearch = (event) => setSearchTerm(event.target.value)
 
@@ -284,24 +277,8 @@ function App() {
     }
   }
 
-  const handlePriceUpdate = (event) => {
-    event.preventDefault()
-
-    try {
-      updatePrice({
-        stationId: priceForm.stationId,
-        fuel: priceForm.fuel,
-        price: priceForm.newPrice,
-      })
-
-    } catch (error) {
-      setStatusMessage(error.message)
-    }
-  }
-
   const stationList = filteredStations.filter((station) => canDisplayOnMap(station, showPendingCoordinates && mapDemoAllowed))
   const pendingLocations = filteredStations.filter((station) => !hasCoordinates(station))
-  const adminCurrentStation = stations.find((station) => station.id === priceForm.stationId)
 
   const updateNotificationPreferences = (key, value) => {
     const nextPreferences = { ...notificationPreferences, [key]: value }
@@ -320,23 +297,25 @@ function App() {
     })
   }
 
-  const openNotification = (notification) => {
-    const updatedNotifications = notifications.map((item) =>
-      item.id === notification.id ? { ...item, read: true } : item,
-    )
-    setNotifications(updatedNotifications)
-    saveNotifications(updatedNotifications)
+  const openNotification = async (notification) => {
+    try {
+      await markOracleNotificationRead(notification.id)
+      await oracleNotices.refresh()
+    } catch (error) { setStatusMessage(error.message); return }
     if (stations.some((station) => station.id === notification.stationId)) {
       setSelectedStationId(notification.stationId)
       navigateTo('mapa')
     } else {
-      setStatusMessage('La estación de este aviso local no está en el catálogo consultado. No se asignará a otra estación.')
+      setStatusMessage('La estación de este aviso no está en el catálogo consultado. No se asignará a otra estación.')
     }
   }
 
-  const handleMarkAllRead = () => {
-    const updatedNotifications = markNotificationsRead()
-    setNotifications(updatedNotifications)
+  const handleMarkAllRead = async () => {
+    try {
+      // Only the loaded, visible page(s), never another user's records.
+      for (const notice of notifications.filter((item) => !item.read)) await markOracleNotificationRead(notice.id)
+    } catch (error) { setStatusMessage(error.message) }
+    finally { await oracleNotices.refresh() }
   }
 
   return (
@@ -488,7 +467,7 @@ function App() {
             <div className="recent-change">
               <span className="recent-icon" aria-hidden="true">↗</span>
               <div>
-                <strong>Última actualización de precios</strong>
+                <strong>Archivo local de precios · referencia anterior</strong>
                 <p>
                   {history[0].stationName}: {fuelLabels[history[0].fuel]} de{' '}
                   {formatMoney(history[0].previousPrice)} a {formatMoney(history[0].newPrice)}
@@ -882,15 +861,18 @@ function App() {
               <h2>Notificaciones {unreadCount > 0 && <span className="unread-inline">{unreadCount} sin leer</span>}</h2>
             </div>
             <button type="button" className="secondary-button" onClick={handleMarkAllRead} disabled={unreadCount === 0}>
-              Marcar todas como leídas
+              Marcar avisos visibles como leídos
             </button>
           </div>
 
-          <p className="table-note">Avisos guardados en este equipo.</p>
+          <p className="table-note">Avisos personales almacenados en Oracle. Se consultan cada 30 segundos durante la sesión.</p>
+          {!oracleNotices.signedIn && <p className="table-note">Inicia sesión en Panel admin para consultar los avisos de tu cuenta. La consulta pública de precios continúa disponible.</p>}
+          {oracleNotices.error && <p className="status-banner" role="alert">{oracleNotices.error}</p>}
+          <button type="button" className="secondary-button" disabled={!oracleNotices.signedIn || oracleNotices.loading} onClick={oracleNotices.refresh}>Actualizar avisos</button>
           <div className="notification-settings">
             <div>
-              <strong>Preferencias de alertas</strong>
-              <small>Elige los avisos que deseas recibir.</small>
+              <strong>Preferencias de visualización</strong>
+              <small>Filtros de este equipo. Las suscripciones y umbrales de Oracle se administran por separado.</small>
             </div>
             <label className="switch-row">
               <input
@@ -934,6 +916,15 @@ function App() {
             ))}
           </div>
           {notifications.length === 0 && <p className="empty-state">No tienes notificaciones.</p>}
+          {oracleNotices.hasMore && <button className="secondary-button" type="button" disabled={oracleNotices.loading} onClick={oracleNotices.more}>Cargar más avisos</button>}
+          {localNotifications.length > 0 && <details>
+            <summary>Archivo local anterior · no son avisos de Oracle ({localNotifications.length})</summary>
+            <button className="secondary-button" type="button" onClick={() => {
+              const next = localNotifications.map((notice) => ({ ...notice, read: true }))
+              try { saveNotifications(next); setLocalNotifications(next) } catch { setStatusMessage('No fue posible guardar el archivo local.') }
+            }}>Marcar archivo local como leído</button>
+            {localNotifications.map((notice) => <p key={notice.id}><strong>{notice.title}</strong> · {notice.message}</p>)}
+          </details>}
         </section>
 
         <section id="admin" className="section-card admin-panel" hidden={activeSection !== 'admin'}>
@@ -945,126 +936,7 @@ function App() {
           </div>
 
           {activeSection === 'admin' && <AdminAccessGate>
-          <div className="admin-workspace">
-            <form className="admin-form" onSubmit={handlePriceUpdate}>
-              <label>
-                Buscar gasolinera
-                <input
-                  type="search"
-                  value={adminSearch}
-                  onChange={(event) => setAdminSearch(event.target.value)}
-                  placeholder="Nombre, marca o zona"
-                />
-              </label>
-              <div className="field-row">
-                <label>
-                  Gasolinera
-                  <select
-                    value={priceForm.stationId}
-                    onChange={(event) => {
-                      const selected = stations.find((station) => station.id === event.target.value)
-                      setPriceForm((previous) => ({
-                        ...previous,
-                        stationId: event.target.value,
-                        newPrice: selected?.prices[previous.fuel] ?? '',
-                      }))
-                    }}
-                  >
-                    {adminStations.map((station) => (
-                      <option key={station.id} value={station.id}>
-                        {station.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Combustible
-                  <select
-                    value={priceForm.fuel}
-                    onChange={(event) => {
-                      const selected = stations.find((station) => station.id === priceForm.stationId)
-                      setPriceForm((previous) => ({
-                        ...previous,
-                        fuel: event.target.value,
-                        newPrice: selected?.prices[event.target.value] ?? '',
-                      }))
-                    }}
-                  >
-                    {Object.entries(fuelLabels).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Precio actual
-                  <output className="current-price">
-                    {adminCurrentStation ? formatMoney(adminCurrentStation.prices[priceForm.fuel]) : '—'}
-                  </output>
-                </label>
-              </div>
-
-              <div className="field-row admin-price-row">
-                <label>
-                  Nuevo precio por galón (Q)
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    disabled
-                    required
-                    value={priceForm.newPrice}
-                    onChange={(event) =>
-                      setPriceForm((previous) => ({ ...previous, newPrice: event.target.value }))
-                    }
-                  />
-                </label>
-                <div className="admin-submit">
-                  <button type="submit" className="primary-button" disabled title="La actualización de precios no está habilitada en esta fase">
-                    Guardar cambios
-                  </button>
-                </div>
-              </div>
-            </form>
-
-            <div className="admin-history">
-              <div className="history-heading">
-                <div>
-                  <span className="section-tag">Actualizaciones</span>
-                  <h3>Historial de modificaciones</h3>
-                </div>
-              </div>
-              {history.length > 0 ? (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Gasolinera</th>
-                        <th>Combustible</th>
-                        <th>Anterior</th>
-                        <th>Nuevo</th>
-                        <th>Fecha</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.map((change) => (
-                        <tr key={change.id}>
-                          <td>{change.stationName}</td>
-                          <td>{fuelLabels[change.fuel]}</td>
-                          <td>{formatMoney(change.previousPrice)}</td>
-                          <td>{formatMoney(change.newPrice)}</td>
-                          <td>{formatDate(change.updatedAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="empty-state">Aún no hay modificaciones registradas.</p>
-              )}
-            </div>
-          </div>
+            <AdminWorkspace stations={stations} onSaved={refresh} />
           </AdminAccessGate>}
         </section>
 
@@ -1074,4 +946,6 @@ function App() {
   )
 }
 
-export default App
+export default function App() {
+  return <AdminSessionProvider><Application /></AdminSessionProvider>
+}

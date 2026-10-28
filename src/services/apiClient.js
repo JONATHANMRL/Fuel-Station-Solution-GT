@@ -12,6 +12,7 @@ export class ApiError extends Error {
 }
 
 const invalidContract = () => new ApiError('INVALID_RESPONSE', 'La API devolvió datos incompatibles. No se mostrarán precios sin validar.')
+const invalidAuthContract = () => new ApiError('INVALID_RESPONSE', 'La API devolvió una respuesta de autenticación incompatible. No se pudo confirmar la sesión.')
 const text = (value) => typeof value === 'string'
 const price = (value) => value === null || (Number.isFinite(value) && value > 0)
 const coordinate = (value, limit) => value === null || (Number.isFinite(value) && Math.abs(value) <= limit)
@@ -46,7 +47,8 @@ export function validateStations(data) {
 function validateAdminSession(data) {
   const id = normalizeOracleId(data?.user?.id)
   if (data?.authenticated !== true || !id || data.user.role !== 'admin' ||
-      !text(data.user.email) || !text(data.expiresAt) || !Number.isFinite(Date.parse(data.expiresAt))) throw invalidContract()
+      !text(data.user.email) || !data.user.email.trim() || !text(data.expiresAt) ||
+      !Number.isFinite(Date.parse(data.expiresAt))) throw invalidAuthContract()
   return { authenticated: true, user: { id, email: data.user.email, role: 'admin' }, expiresAt: data.expiresAt }
 }
 
@@ -103,6 +105,21 @@ export function createApiClient({ baseUrl, fetchImpl = globalThis.fetch, timeout
         credentials: auth ? 'include' : 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       })
       if (!response.ok) {
+        if (auth && !path.startsWith('/auth/') && [409, 503].includes(response.status)) {
+          const messages = {
+            PRICE_WRITES_DISABLED: 'La escritura de precios no está habilitada en el servidor.',
+            PRICE_CONFLICT: 'El precio cambió en otro cliente. Actualiza antes de guardar.',
+            PRICE_UNCHANGED: 'El precio nuevo es igual al vigente.',
+            FUEL_UNAVAILABLE: 'La estación o el combustible no están disponibles.',
+            REQUEST_REUSED: 'El identificador corresponde a otra solicitud.',
+            REQUEST_UNRESOLVED: 'Solicitud pendiente o fallida. Consulta el historial antes de intentar otro cambio.',
+            COMMIT_UNCERTAIN: 'No se pudo confirmar el guardado. Consulta el historial; no reenvíes el cambio.',
+            NOTIFICATIONS_DISABLED: 'Las notificaciones Oracle todavía no están habilitadas.',
+          }
+          let code
+          try { code = (await response.json())?.detail?.code } catch { /* Keep safe generic message. */ }
+          if (Object.hasOwn(messages, code)) throw new ApiError(code, messages[code])
+        }
         if (auth) throw new ApiError(`HTTP_${response.status}`,
           response.status === 401 ? 'Correo o contraseña incorrectos, o sesión vencida.'
             : response.status === 403 ? 'Acceso administrativo u origen no autorizado.'
@@ -116,7 +133,7 @@ export function createApiClient({ baseUrl, fetchImpl = globalThis.fetch, timeout
       let data
       try { data = await response.json() } catch {
         if (controller.signal.aborted) throw new DOMException('Consulta cancelada', 'AbortError')
-        throw invalidContract()
+        throw auth ? invalidAuthContract() : invalidContract()
       }
       if (controller.signal.aborted) throw new DOMException('Consulta cancelada', 'AbortError')
       return data
@@ -145,6 +162,12 @@ export function createApiClient({ baseUrl, fetchImpl = globalThis.fetch, timeout
     },
     async signOut({ signal } = {}) {
       await get('/auth/logout', signal, { method: 'POST', auth: true, body: {} })
+    },
+    async operations(path, { signal, method = 'GET', body } = {}) {
+      if (!/^\/(admin\/(capabilities|prices|history)|notifications(?:\/[1-9][0-9]*\/read)?)(?:\?|$)/.test(path)) {
+        throw new ApiError('INVALID_OPERATION', 'Operación administrativa inválida.')
+      }
+      return get(path, signal, { method, body, auth: true })
     },
   }
 }

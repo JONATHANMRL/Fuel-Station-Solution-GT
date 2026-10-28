@@ -19,6 +19,11 @@ from .auth_api import router as auth_router, require_administrator, auth_error_h
 from .auth_config import AuthSettings
 from .auth_core import AuthError, AuthService
 from .auth_repository import OracleUserRepository
+from .operations_config import OperationsSettings, writer_credentials
+from .operations_repository import OracleOperationsRepository
+from .operation_ledger import OperationLedger
+from .operations_api import OperationsService, router as operations_router
+from .auth_core import SessionStore
 
 legacy_router = APIRouter(tags=['Demostración heredada — sin integración Oracle'])
 
@@ -120,7 +125,7 @@ def toggle_favorite(request: FavoriteRequest) -> Dict[str, Any]:
     return {'favorites': sorted(favorite_ids)}
 
 
-@legacy_router.get('/notifications')
+@legacy_router.get('/demo/notifications')
 def get_notifications() -> Dict[str, Any]:
     return {'notifications': notifications}
 
@@ -134,7 +139,7 @@ def subscribe_push(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@legacy_router.post('/admin/prices', dependencies=[Depends(require_administrator)])
+@legacy_router.post('/demo/admin/prices', dependencies=[Depends(require_administrator)])
 def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
     # Even an authenticated administrator cannot write prices in phase 3.
     raise HTTPException(status_code=503, detail={'code': 'PRICE_WRITES_DISABLED',
@@ -142,7 +147,8 @@ def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
 
 
 def create_app(settings: OracleSettings | None = None, repository: Any = None,
-               auth_settings: AuthSettings | None = None, auth_service: Any = None) -> FastAPI:
+               auth_settings: AuthSettings | None = None, auth_service: Any = None,
+               operations_settings: OperationsSettings | None = None, operations_service: Any = None) -> FastAPI:
     """Create the existing API, with an injectable read repository for offline tests."""
     resolved = settings if settings is not None else OracleSettings.from_env()
     reader = repository if repository is not None else OracleStationRepository(resolved)
@@ -156,6 +162,14 @@ def create_app(settings: OracleSettings | None = None, repository: Any = None,
         user_reader = OracleUserRepository(credentials, resolved.user)
         auth_service = AuthService(policy, user_reader)
 
+    operation_repository = None
+    if operations_service is None:
+        operation_policy = operations_settings if operations_settings is not None else OperationsSettings.from_env()
+        credentials = writer_credentials(resolved, os.environ.get('AUTH_ORACLE_USER', ''))
+        operation_repository = OracleOperationsRepository(credentials, operation_policy)
+        operations_service = OperationsService(operation_repository, operation_policy,
+                                               OperationLedger(SessionStore(policy.session_db)))
+
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         # Pool creation is lazy: /health and offline tests never contact Oracle.
@@ -165,10 +179,13 @@ def create_app(settings: OracleSettings | None = None, repository: Any = None,
             application.state.station_repository.close()
             if user_reader is not None:
                 user_reader.close()
+            if operation_repository is not None:
+                operation_repository.close()
 
     application = FastAPI(title='Gasolina GT API', version='0.2.0', lifespan=lifespan)
     application.state.station_repository = reader
     application.state.auth_service = auth_service
+    application.state.operations_service = operations_service
     application.add_exception_handler(AuthError, auth_error_handler)
 
     @application.exception_handler(RequestValidationError)
@@ -188,6 +205,7 @@ def create_app(settings: OracleSettings | None = None, repository: Any = None,
     )
     application.include_router(read_router)
     application.include_router(auth_router)
+    application.include_router(operations_router)
     application.include_router(legacy_router)
     return application
 

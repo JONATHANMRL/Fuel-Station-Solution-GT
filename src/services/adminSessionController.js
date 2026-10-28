@@ -1,37 +1,50 @@
 // Only public user metadata is held in memory; the HttpOnly cookie is inaccessible.
-export function createAdminSessionController(service, onChange, { clock = Date.now, schedule = setTimeout, unschedule = clearTimeout } = {}) {
-  let version = 0, timer, controller
+export function createAdminSessionController(service, onChange, { schedule = setTimeout, unschedule = clearTimeout } = {}) {
+  let version = 0, timer, active
   let session = null
+  const expired = 'La sesión ha vencido o ya no está disponible. Inicia sesión nuevamente.'
   const publish = (next, error = '') => {
     session = next
     unschedule(timer)
     if (session) {
-      const remaining = Date.parse(session.expiresAt) - clock()
-      if (remaining <= 0) { session = null; error = 'La sesión ha vencido. Inicia sesión nuevamente.' }
-      else timer = schedule(() => {
-        ++version
-        controller?.abort()
-        publish(null, 'La sesión ha vencido. Inicia sesión nuevamente.')
-      }, remaining)
+      const current = version
+      // A server-confirmed session must not be rejected by a different PC clock.
+      // Poll the authority instead of expiring locally. Old, already queued timers
+      // cannot interrupt a newer login, logout or StrictMode effect lifecycle.
+      timer = schedule(() => {
+        if (current === version && !active) return check()
+      }, 30000)
     }
     onChange({ session, busy: false, error })
   }
-  async function run(operation, preserveOnFailure = false) {
+  function run(operation, { preserveOnFailure = false, checking = false } = {}) {
     const current = ++version
-    controller?.abort()
-    controller = new AbortController()
+    active?.controller.abort()
+    unschedule(timer)
+    const ticket = { controller: new AbortController(), promise: null }
+    active = ticket
     onChange({ session, busy: true, error: '' })
-    try {
-      const next = await operation({ signal: controller.signal })
-      if (current === version) publish(next)
-    } catch (error) {
-      if (current === version) publish(preserveOnFailure ? session : null, error.message || 'No se pudo verificar la sesión.')
-    }
+    ticket.promise = (async () => {
+      try {
+        const next = await operation({ signal: ticket.controller.signal })
+        if (current === version) publish(next, checking && session && !next ? expired : '')
+      } catch (error) {
+        if (current === version) publish(preserveOnFailure ? session : null, error.message || 'No se pudo verificar la sesión.')
+      } finally {
+        if (active === ticket) active = null
+      }
+    })()
+    return ticket.promise
+  }
+  function check() {
+    // Focus events and repeated clicks join pending work; they never supersede
+    // login's POST + cookie confirmation or an in-flight logout.
+    return active ? active.promise : run(service.getAdminSession, { checking: true })
   }
   return {
-    check: () => run(service.getAdminSession),
+    check,
     signIn: (credentials) => run((options) => service.signInAdmin(credentials, options)),
-    signOut: () => run(async (options) => { await service.signOutAdmin(options); return null }, true),
-    cancel() { ++version; controller?.abort(); unschedule(timer) },
+    signOut: () => run(async (options) => { await service.signOutAdmin(options); return null }, { preserveOnFailure: true }),
+    cancel() { ++version; active?.controller.abort(); active = null; unschedule(timer) },
   }
 }
