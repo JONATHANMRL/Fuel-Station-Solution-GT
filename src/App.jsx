@@ -3,6 +3,7 @@ import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaf
 import { fuelLabels } from './data'
 import AdminAccessGate from './components/AdminAccessGate'
 import AdminWorkspace from './components/AdminWorkspace'
+import PublicPriceAlerts from './components/PublicPriceAlerts.jsx'
 import AdminSessionProvider from './components/AdminSessionProvider.jsx'
 import useOracleNotifications from './hooks/useOracleNotifications.js'
 import { markOracleNotificationRead } from './services/oracleOperationsService.js'
@@ -860,6 +861,12 @@ function Application() {
               <span className="section-tag">Notificaciones</span>
               <h2>Notificaciones {unreadCount > 0 && <span className="unread-inline">{unreadCount} sin leer</span>}</h2>
             </div>
+          </div>
+
+          <PublicPriceAlerts />
+
+          <div className="section-heading">
+            <div><h3>Mis notificaciones</h3><p className="table-note">Avisos personales de la cuenta autenticada.</p></div>
             <button type="button" className="secondary-button" onClick={handleMarkAllRead} disabled={unreadCount === 0}>
               Marcar avisos visibles como leídos
             </button>

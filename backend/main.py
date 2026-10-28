@@ -24,6 +24,7 @@ from .operations_repository import OracleOperationsRepository
 from .operation_ledger import OperationLedger
 from .operations_api import OperationsService, router as operations_router
 from .auth_core import SessionStore
+from .public_price_alerts import PublicAlertSettings, OraclePublicPriceAlertRepository, router as public_alert_router
 
 legacy_router = APIRouter(tags=['Demostración heredada — sin integración Oracle'])
 
@@ -148,7 +149,8 @@ def update_price(request: PriceUpdateRequest) -> Dict[str, Any]:
 
 def create_app(settings: OracleSettings | None = None, repository: Any = None,
                auth_settings: AuthSettings | None = None, auth_service: Any = None,
-               operations_settings: OperationsSettings | None = None, operations_service: Any = None) -> FastAPI:
+               operations_settings: OperationsSettings | None = None, operations_service: Any = None,
+               public_alert_settings: PublicAlertSettings | None = None, public_alert_repository: Any = None) -> FastAPI:
     """Create the existing API, with an injectable read repository for offline tests."""
     resolved = settings if settings is not None else OracleSettings.from_env()
     reader = repository if repository is not None else OracleStationRepository(resolved)
@@ -186,6 +188,9 @@ def create_app(settings: OracleSettings | None = None, repository: Any = None,
     application.state.station_repository = reader
     application.state.auth_service = auth_service
     application.state.operations_service = operations_service
+    alert_policy = public_alert_settings if public_alert_settings is not None else PublicAlertSettings.from_env()
+    application.state.public_alert_repository = (public_alert_repository if public_alert_repository is not None
+        else OraclePublicPriceAlertRepository(reader, resolved, alert_policy))
     application.add_exception_handler(AuthError, auth_error_handler)
 
     @application.exception_handler(RequestValidationError)
@@ -206,6 +211,7 @@ def create_app(settings: OracleSettings | None = None, repository: Any = None,
     application.include_router(read_router)
     application.include_router(auth_router)
     application.include_router(operations_router)
+    application.include_router(public_alert_router)
     application.include_router(legacy_router)
     return application
 

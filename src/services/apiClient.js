@@ -154,6 +154,14 @@ export function createApiClient({ baseUrl, fetchImpl = globalThis.fetch, timeout
       if (fuel !== undefined && !fuels.includes(fuel)) throw new ApiError('INVALID_FUEL', 'Selecciona un combustible válido.')
       return validatePrices(await get(`/prices${fuel ? `?fuel=${fuel}` : ''}`, signal))
     },
+    async publicPriceAlerts({ limit = 25, cursor, signal } = {}) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100 ||
+          (cursor !== undefined && (typeof cursor !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(cursor)))) {
+        throw new ApiError('INVALID_PUBLIC_PAGE', 'Página de avisos generales inválida.')
+      }
+      const query = new URLSearchParams({ limit: String(limit), ...(cursor ? { cursor } : {}) })
+      return get(`/public/price-alerts?${query}`, signal)
+    },
     async signIn({ email, password }, { signal } = {}) {
       return validateAdminSession(await get('/auth/login', signal, { method: 'POST', auth: true, body: { email, password } }))
     },

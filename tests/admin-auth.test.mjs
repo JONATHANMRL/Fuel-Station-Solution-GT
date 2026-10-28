@@ -59,7 +59,6 @@ test('session 401/403 becomes signed out, but server failures are not silently a
 function controllerHarness(service) {
   const states = [], timers = []
   const controller = createAdminSessionController(service, (state) => states.push(state), {
-    clock: () => Date.parse('2098-12-31T23:59:00Z'),
     schedule: (callback, delay) => { timers.push({ callback, delay }); return timers.length },
     unschedule: () => {},
   })
@@ -73,9 +72,10 @@ test('controller supports login, expiry and confirmed logout without localStorag
   assert.equal(states.at(-1).session, null)
   await controller.signIn({ username: 'admin@example.invalid', password: 'transient' })
   assert.equal(states.at(-1).session.user.id, '42')
-  assert.equal(timers.at(-1).delay, 60000)
-  timers.at(-1).callback()
+  assert.equal(timers.at(-1).delay, 30000)
+  await timers.at(-1).callback()
   assert.equal(states.at(-1).session, null)
+  assert.match(states.at(-1).error, /vencido/)
   await controller.signIn({})
   await controller.signOut()
   assert.equal(states.at(-1).session, null)
