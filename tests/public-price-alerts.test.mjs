@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { apiClient, createApiClient } from '../src/services/apiClient.js'
 import { getPublicPriceAlerts } from '../src/services/publicPriceAlertsService.js'
-import { createPublicPriceAlertsLoader } from '../src/services/publicPriceAlertsLoader.js'
+import { activatePublicPriceAlerts, createPublicPriceAlertsLoader } from '../src/services/publicPriceAlertsLoader.js'
 import { jsonResponse } from './fixtures/oracleApi.mjs'
 
 const row = (priceId = '8', changes = {}) => ({ id: `public-price:${priceId}`, priceId, source: 'oracle',
@@ -12,6 +12,72 @@ const row = (priceId = '8', changes = {}) => ({ id: `public-price:${priceId}`, p
 const page = (alerts = [row()], nextCursor = null, activatedAt = null) => ({ source: 'oracle', alerts,
   count: alerts.length, limit: 25, fetchedAt: '2026-10-27T18:01:00Z', nextCursor, activatedAt })
 const deferred = () => { let resolve; const promise = new Promise((yes) => { resolve = yes }); return { promise, resolve } }
+
+test('leaving the section clears the only timer; re-entry and manual refresh never accumulate intervals', async () => {
+  const timers = new Map()
+  let serial = 0, calls = 0
+  const loader = createPublicPriceAlertsLoader(async () => { calls++; return page() }, () => {}, {
+    schedule(callback, delay) { assert.equal(delay, 30000); const id = ++serial; timers.set(id, callback); return id },
+    unschedule(id) { timers.delete(id) },
+  })
+  for (let i = 0; i < 4; i++) {
+    await loader.start()
+    assert.equal(timers.size, 1)
+    await loader.refresh()
+    assert.equal(timers.size, 1)
+    loader.cancel()
+    assert.equal(timers.size, 0)
+  }
+  assert.equal(calls, 8)
+})
+
+test('StrictMode deferred setup-cleanup-setup makes one initial request and an inactive section makes none', async () => {
+  const deferredStarts = []
+  let starts = 0, cancels = 0
+  const loader = { start() { starts++ }, cancel() { cancels++ } }
+  const firstCleanup = activatePublicPriceAlerts(loader, true, (fn) => deferredStarts.push(fn))
+  firstCleanup()
+  const cleanup = activatePublicPriceAlerts(loader, true, (fn) => deferredStarts.push(fn))
+  deferredStarts.forEach((fn) => fn())
+  assert.equal(starts, 1)
+  cleanup()
+  activatePublicPriceAlerts(loader, false, (fn) => fn())()
+  assert.equal(starts, 1)
+  assert.equal(cancels, 2)
+})
+
+test('independent active windows have independent 30-second cycles, each joining concurrent requests', async () => {
+  let calls = 0
+  const pending = deferred()
+  const first = harness(async () => { calls++; return pending.promise })
+  const second = harness(async () => { calls++; return pending.promise })
+  const requests = [first.loader.start(), second.loader.start(), first.loader.refresh(), second.loader.refresh()]
+  assert.equal(calls, 2) // Two active documents, not duplicate timers in one document.
+  pending.resolve(page())
+  await Promise.all(requests)
+  assert.equal(first.timers.length, 1)
+  assert.equal(second.timers.length, 1)
+  first.loader.cancel(); second.loader.cancel()
+  await first.timers[0].callback(); await second.timers[0].callback()
+  assert.equal(calls, 2)
+})
+
+test('system notifications receive only current first pages, never pagination or obsolete responses', async () => {
+  const latest = [], old = deferred()
+  let calls = 0
+  const loader = createPublicPriceAlertsLoader(async ({ cursor }) => {
+    if (++calls === 1) return old.promise
+    return cursor ? page([row('7')]) : page([row('9')], 'older')
+  }, () => {}, { schedule: () => 1, unschedule() {}, onLatest: (rows) => latest.push(rows.map((r) => r.id)) })
+  const obsolete = loader.start()
+  loader.cancel()
+  await loader.start()
+  await loader.more()
+  old.resolve(page([row('8')]))
+  await obsolete
+  assert.deepEqual(latest, [['public-price:9']])
+  loader.cancel()
+})
 
 test('public HTTP uses GET without cookies, credentials, session, CSRF marker or write capability', async (context) => {
   const calls = []

@@ -1,0 +1,16 @@
+module.exports = {
+  appId: 'gt.gasolinagt.desktop', productName: 'GasolinaGT',
+  directories: { output: 'release', buildResources: 'desktop/assets' },
+  files: ['desktop/*.cjs', 'desktop/default-client.json', 'desktop/assets/icon.png', 'dist-desktop/**/*',
+    'package.json', '!**/*.map', '!**/node_modules/**/*', '!desktop/builder.cjs'],
+  asar: true, npmRebuild: false, publish: null,
+  win: { target: [{ target: 'nsis', arch: ['x64'] }], icon: 'desktop/assets/icon.ico',
+    artifactName: 'GasolinaGT-Setup-${version}-${arch}.${ext}', signAndEditExecutable: true, signExecutable: false,
+    requestedExecutionLevel: 'asInvoker' },
+  nsis: { oneClick: false, perMachine: false, allowElevation: false, allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true, createStartMenuShortcut: true, shortcutName: 'GasolinaGT',
+    deleteAppDataOnUninstall: false },
+  extraMetadata: { name: 'gasolinagt', version: '1.0.0', main: 'desktop/main.cjs',
+    description: 'Consulta y comparación de precios de combustibles en Huehuetenango',
+    author: 'Equipo GasolinaGT', dependencies: null },
+}

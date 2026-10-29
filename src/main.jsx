@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import './index.css'
 import App from './App.jsx'
 
-registerSW({ immediate: true })
+if (import.meta.env.MODE !== 'desktop') registerSW({ immediate: true })
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

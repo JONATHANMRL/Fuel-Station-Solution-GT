@@ -25,6 +25,7 @@ import {
   saveNotificationPreferences,
 } from './services/gasolinaService'
 import './App.css'
+import { systemNotifier, systemNotificationPermission } from './services/systemNotifications.js'
 
 function getSectionFromHash() {
   const section = window.location.hash.slice(1)
@@ -131,7 +132,7 @@ function Application() {
     useState(getNotificationPreferences)
   const [selectedStationId, setSelectedStationId] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
-  const [notificationPermission, setNotificationPermission] = useState('default')
+  const [notificationPermission, setNotificationPermission] = useState(systemNotificationPermission)
   const [sortOrder, setSortOrder] = useState('asc')
   const [compareStationIds, setCompareStationIds] = useState([])
   const [showMobileNav, setShowMobileNav] = useState(false)
@@ -268,12 +269,12 @@ function Application() {
     }
 
     try {
-      const permission = await Notification.requestPermission()
+      const permission = await systemNotifier.activate(() => setStatusMessage('No se pudo mostrar la notificación. Revisa los permisos y el modo No molestar de Windows.'))
       setNotificationPermission(permission)
 
       if (permission === 'granted') {
         setStatusMessage(
-          'Notificaciones activadas.',
+          'Notificaciones habilitadas. Si no aparece el aviso de prueba, revisa las notificaciones y el modo No molestar de Windows.',
         )
         return
       }
@@ -281,7 +282,7 @@ function Application() {
       setStatusMessage('Se requieren permisos para recibir alertas de precios.')
     } catch (error) {
       console.error('No se pudo solicitar permiso para notificaciones del navegador.', error)
-      setStatusMessage('No fue posible solicitar el permiso de notificaciones en este navegador.')
+      setStatusMessage('No fue posible activar las notificaciones. Revisa los permisos de notificaciones del sistema.')
     }
   }
 

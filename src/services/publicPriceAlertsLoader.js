@@ -5,7 +5,7 @@ export function activatePublicPriceAlerts(loader, active, defer = queueMicrotask
   return () => { disposed = true; if (active) loader.cancel() }
 }
 
-export function createPublicPriceAlertsLoader(fetchPage, onChange, { schedule = setTimeout, unschedule = clearTimeout } = {}) {
+export function createPublicPriceAlertsLoader(fetchPage, onChange, { schedule = setTimeout, unschedule = clearTimeout, onLatest = () => {} } = {}) {
   let version = 0, timer, active, running = false
   let alerts = [], nextCursor = null, activatedAt = null, error = '', fetchedAt = null
   const publish = (loading = false) => onChange({ alerts, nextCursor, activatedAt, error, fetchedAt, loading })
@@ -37,6 +37,8 @@ export function createPublicPriceAlertsLoader(fetchPage, onChange, { schedule = 
         activatedAt = page.activatedAt
         fetchedAt = page.fetchedAt
         error = ''
+        // OS delivery must never turn a successful Oracle query into a data error.
+        if (!append) { try { onLatest(page.alerts) } catch { /* Keep in-app alerts available. */ } }
       } catch (failure) {
         if (current !== version) return
         alerts = []; nextCursor = null; fetchedAt = null

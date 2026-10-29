@@ -182,6 +182,6 @@ export function createApiClient({ baseUrl, fetchImpl = globalThis.fetch, timeout
 
 const env = import.meta.env ?? {}
 export const apiClient = createApiClient({
-  baseUrl: env.VITE_API_BASE_URL,
+  baseUrl: globalThis.__GASOLINAGT_CONFIG__?.apiBaseUrl ?? env.VITE_API_BASE_URL,
   timeoutMs: env.VITE_API_TIMEOUT_MS === undefined ? 12000 : Number(env.VITE_API_TIMEOUT_MS),
 })
